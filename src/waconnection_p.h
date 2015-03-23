@@ -32,6 +32,9 @@ public:
     void sendGetStatuses(const QStringList &jids);
     void sendGetPicture(const QString &jid);
     void sendGetPictureIds(const QStringList &jids);
+    void sendPresenceRequest(const QString &jid, const QString &type);
+
+    void sendSetPresence(bool available, const QString &pushname = QString());
 
     void sendNormalText(const QString &jid, const QString &text);
     void sendBroadcastText(const QString &jid, const QString &text, const QStringList &jids);
@@ -39,6 +42,7 @@ public:
     void syncContacts(const QVariantMap &contacts);
 
     void sendSync(const QStringList &syncContacts, const QStringList &deleteJids, int syncType = 4, int index = 0, bool last = true);
+    void sendGetGroups(const QString &type);
 
     int sendRequest(const ProtocolTreeNode &node);
     int sendRequest(const ProtocolTreeNode &node, const char *member);
@@ -50,6 +54,7 @@ public slots:
     void contactPicture(const ProtocolTreeNode &node);
     void contactsPicrureIds(const ProtocolTreeNode &node);
     void syncResponse(const ProtocolTreeNode &node);
+    void groupsResponse(const ProtocolTreeNode &node);
 
 private:
     Q_DECLARE_PUBLIC(WAConnection)
@@ -66,6 +71,7 @@ private:
     void parseSubjectNotification(const ProtocolTreeNode &node);
     void parseStatusNotification(const ProtocolTreeNode &node);
     void parseGroupNotification(const ProtocolTreeNode &node);
+    void parsePresence(const ProtocolTreeNode &node);
 
     QString makeId(const QString &prefix);
     QString messageId();

@@ -216,6 +216,34 @@ void WAConnectionPrivate::sendGetPictureIds(const QStringList &jids)
     //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
 }
 
+void WAConnectionPrivate::sendPresenceRequest(const QString &jid, const QString &type)
+{
+    qDebug() << jid << type;
+
+    ProtocolTreeNode presenceNode("presence");
+
+    AttributeList attrs;
+    attrs.insert("to", jid);
+    attrs.insert("type", type);
+    presenceNode.setAttributes(attrs);
+
+    int bytes = sendRequest(presenceNode);
+}
+
+void WAConnectionPrivate::sendSetPresence(bool available, const QString &pushname)
+{
+    ProtocolTreeNode presenceNode("presence");
+
+    AttributeList attrs;
+    if (!pushname.isEmpty()) {
+        attrs.insert("name", pushname);
+    }
+    attrs.insert("type", available ? "available" : "unavailable");
+    presenceNode.setAttributes(attrs);
+
+    int bytes = sendRequest(presenceNode);
+}
+
 void WAConnectionPrivate::sendNormalText(const QString &jid, const QString &text)
 {
     ProtocolTreeNode body = getTextBody(text);
@@ -247,7 +275,6 @@ void WAConnectionPrivate::syncContacts(const QVariantMap &contacts)
 
 void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStringList &deleteJids, int syncType, int index, bool last)
 {
-    qDebug() << syncContacts;
     QString id = makeId("sendsync_");
 
     QString mode("delta");
@@ -301,13 +328,18 @@ void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStrin
     attrs.insert("sid", QString::number((QDateTime::currentDateTimeUtc().toTime_t() + 11644477200) * 10000000));
     syncNode.setAttributes(attrs);
 
-    foreach (const QString &syncNumber, syncContacts) {
+    foreach (QString syncNumber, syncContacts) {
         ProtocolTreeNode userNode("user");
-        userNode.setData(syncNumber.toLatin1());
+        QString number = syncNumber.remove("p");
+        userNode.setData(number.toLatin1());
         syncNode.addChild(userNode);
-        if (!syncNumber.startsWith("+")) {
+        if (!number.startsWith("+")) {
             ProtocolTreeNode extraNode("user");
-            extraNode.setData(QString("+%1").arg(syncNumber).toLatin1());
+            number = "+" + number;
+            if (!syncing.contains("p" + number)) {
+                syncing["p" + number] = syncing["p" + syncNumber];
+            }
+            extraNode.setData(number.toLatin1());
             syncNode.addChild(extraNode);
         }
     }
@@ -330,6 +362,25 @@ void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStrin
     iqNode.addChild(syncNode);
 
     int bytes = sendRequest(iqNode, WAREPLY(syncResponse));
+}
+
+void WAConnectionPrivate::sendGetGroups(const QString &type)
+{
+    QString id = makeId("get_groups_");
+
+    ProtocolTreeNode iqNode("iq");
+
+    AttributeList attrs;
+    attrs.insert("id", id);
+    attrs.insert("type", "get");
+    attrs.insert("to", "g.us");
+    attrs.insert("xmlns", "w:g2");
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode childNode(type);
+    iqNode.addChild(childNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(groupsResponse));
 }
 
 int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node)
@@ -514,7 +565,7 @@ void WAConnectionPrivate::parseStatusNotification(const ProtocolTreeNode &node)
 {
     if (node.getChildren().contains("set")) {
         QString status = node.getChild("set").getDataString();
-        Q_EMIT q_ptr->contactStatus(node.getAttributeValue("from"), status);
+        Q_EMIT q_ptr->contactStatus(node.getAttributeValue("from"), status, node.getAttributeValue("t"));
     }
 }
 
@@ -600,6 +651,17 @@ void WAConnectionPrivate::parseGroupNotification(const ProtocolTreeNode &node)
                 }
             }
         }
+    }
+}
+
+void WAConnectionPrivate::parsePresence(const ProtocolTreeNode &node)
+{
+    QString jid = node.getAttributeValue("from");
+    if (node.getAttributes().contains("type")) {
+        Q_EMIT q_ptr->contactUnavailable(jid, node.getAttributeValue("last"));
+    }
+    else {
+        Q_EMIT q_ptr->contactAvailable(jid);
     }
 }
 
@@ -796,17 +858,20 @@ bool WAConnectionPrivate::read()
         else {
             QString tag = node.getTag();
 
-            if (tag == "stream:start") {
+            if (tag == "stream:start")
+            {
                 handled = true;
             }
-            else if (tag == "stream:close") {
+            else if (tag == "stream:close")
+            {
                 handled = true;
             }
             else if (tag == "stream:features")
             {
                 handled = true;
             }
-            else if (tag == "stream:error") {
+            else if (tag == "stream:error")
+            {
                 qDebug() << "STREAM_ERROR!";
                 ProtocolTreeNodeListIterator i(node.getChildren());
                 while (i.hasNext())
@@ -886,6 +951,11 @@ bool WAConnectionPrivate::read()
             {
                 handled = true;
             }
+            else if (tag == "presence")
+            {
+                parsePresence(node);
+                handled = true;
+            }
         }
         if (!handled) {
             qDebug() << "TODO: Unhandled node!";
@@ -959,7 +1029,9 @@ void WAConnectionPrivate::contactLastSeen(const ProtocolTreeNode &node)
     QString jid = node.getAttributeValue("from");
     if (node.getChildren().contains("query")) {
         ProtocolTreeNode query = node.getChild("query");
-        Q_EMIT q_ptr->contactLastSeen(jid, query.getAttributeValue("seconds"));
+        uint seconds = query.getAttributeValue("seconds").toUInt();
+        uint timestamp = QDateTime::currentDateTime().toTime_t() - seconds;
+        Q_EMIT q_ptr->contactLastSeen(jid, timestamp);
     }
     else if (node.getChildren().contains("error")) {
         ProtocolTreeNode error = node.getChild("error");
@@ -970,6 +1042,7 @@ void WAConnectionPrivate::contactLastSeen(const ProtocolTreeNode &node)
 void WAConnectionPrivate::contactsStatuses(const ProtocolTreeNode &node)
 {
     if (node.getChildren().contains("status")) {
+        QVariantMap result;
         ProtocolTreeNode status = node.getChild("status");
         ProtocolTreeNodeListIterator i(status.getChildren());
         while (i.hasNext())
@@ -977,19 +1050,26 @@ void WAConnectionPrivate::contactsStatuses(const ProtocolTreeNode &node)
             ProtocolTreeNode child = i.next().value();
             if (child.getTag() == "user") {
                 QString jid = child.getAttributeValue("jid");
+                QVariantMap data;
                 if (child.getAttributes().contains("type")) {
                     QString type = child.getAttributeValue("type");
+                    data["type"] = type;
                     if (type == "fail") {
-                        Q_EMIT q_ptr->contactStatusHidden(jid, child.getAttributeValue("code"));
+                        data["status"] = tr("Contact status hidden");
                     }
                     else {
                         //
                     }
                 }
                 else {
-                    Q_EMIT q_ptr->contactStatus(jid, child.getDataString());
+                    data["status"] = child.getDataString();
+                    data["t"] = child.getAttributeValue("t");
                 }
+                result[jid] = data;
             }
+        }
+        if (result.size() > 0) {
+            Q_EMIT q_ptr->contactsStatuses(result);
         }
     }
 }
@@ -1001,7 +1081,7 @@ void WAConnectionPrivate::contactPicture(const ProtocolTreeNode &node)
     if (type == "result") {
         if (node.getChildren().contains("picture")) {
             ProtocolTreeNode picture = node.getChild("picture");
-            Q_EMIT q_ptr->contactPicture(jid, picture.getData());
+            Q_EMIT q_ptr->contactPicture(jid, picture.getData(), picture.getAttributeValue("id"));
         }
     }
     else if (type == "error") {
@@ -1015,6 +1095,7 @@ void WAConnectionPrivate::contactPicture(const ProtocolTreeNode &node)
 void WAConnectionPrivate::contactsPicrureIds(const ProtocolTreeNode &node)
 {
     if (node.getChildren().contains("list")) {
+        QVariantMap contacts;
         ProtocolTreeNode list = node.getChild("list");
         ProtocolTreeNodeListIterator i(list.getChildren());
         while (i.hasNext())
@@ -1023,19 +1104,81 @@ void WAConnectionPrivate::contactsPicrureIds(const ProtocolTreeNode &node)
             if (child.getTag() == "user") {
                 QString jid = child.getAttributeValue("jid");
                 if (child.getAttributes().contains("id")) {
-                    Q_EMIT q_ptr->contactPictureId(jid, child.getAttributeValue("id"), jid);
+                    //Q_EMIT q_ptr->contactPictureId(jid, child.getAttributeValue("id"), jid);
+                    contacts[jid] = child.getAttributeValue("id");
                 }
                 else {
                     sendGetPicture(jid);
+                    //contacts[jid] == "hidden";
                 }
             }
+        }
+        if (contacts.size() > 0) {
+            Q_EMIT q_ptr->contactsPictureIds(contacts);
         }
     }
 }
 
 void WAConnectionPrivate::syncResponse(const ProtocolTreeNode &node)
 {
-    qDebug() << "got sync response";
+    QVariantMap synced;
+    ProtocolTreeNode syncNode = node.getChild("sync");
+    if (syncNode.getChildren().contains("in")) {
+        ProtocolTreeNode inNode = syncNode.getChild("in");
+        ProtocolTreeNodeListIterator i(inNode.getChildren());
+        while (i.hasNext())
+        {
+            ProtocolTreeNode userNode = i.next().value();
+            if (userNode.getTag() == "user") {
+                QString number = userNode.getDataString();
+                QString jid = userNode.getAttributeValue("jid");
+                if (!synced.contains(jid)) {
+                    synced[jid] = syncing["p" + number];
+                }
+            }
+        }
+    }
+    if (!synced.isEmpty()) {
+        qDebug() << synced;
+        Q_EMIT q_ptr->contactsSynced(synced);
+    }
+}
+
+void WAConnectionPrivate::groupsResponse(const ProtocolTreeNode &node)
+{
+    if (node.getChildren().contains("groups")) {
+        QVariantMap groups;
+        ProtocolTreeNode groupsNode = node.getChild("groups");
+        ProtocolTreeNodeListIterator i(groupsNode.getChildren());
+        while (i.hasNext())
+        {
+            QStringList participants;
+            QStringList admins;
+            ProtocolTreeNode groupNode = i.next().value();
+            ProtocolTreeNodeListIterator j(groupNode.getChildren());
+            while (j.hasNext())
+            {
+                ProtocolTreeNode participantNode = j.next().value();
+                QString jid = participantNode.getAttributeValue("jid");
+                participants.append(jid);
+                if (participantNode.getAttributeValue("type") == "admin") {
+                    admins.append(jid);
+                }
+            }
+            QVariantMap group;
+            group["creation"] = groupNode.getAttributeValue("creation");
+            group["creator"] = groupNode.getAttributeValue("creator");
+            group["s_o"] = groupNode.getAttributeValue("s_o");
+            group["s_t"] = groupNode.getAttributeValue("s_t");
+            group["subject"] = groupNode.getAttributeValue("subject");
+            group["participants"] = participants;
+            group["admins"] = admins;
+            groups[groupNode.getAttributeValue("id") + "@g.us"] = group;
+        }
+        if (groups.size() > 0) {
+            Q_EMIT q_ptr->groupsReceived(groups);
+        }
+    }
 }
 
 WAConnection::WAConnection(QObject *parent) :
@@ -1086,6 +1229,51 @@ void WAConnection::sendGetProperties()
 void WAConnection::sendPing()
 {
     d_ptr->sendPing();
+}
+
+void WAConnection::sendAvailable(const QString &pushname)
+{
+    d_ptr->sendSetPresence(true, pushname);
+}
+
+void WAConnection::sendUnavailable()
+{
+    d_ptr->sendSetPresence(false);
+}
+
+void WAConnection::sendGetGroups(const QString &type)
+{
+    d_ptr->sendGetGroups(type);
+}
+
+void WAConnection::sendSubscribe(const QString &jid)
+{
+    d_ptr->sendPresenceRequest(jid, QString("subscribe"));
+}
+
+void WAConnection::sendUnsubscribe(const QString &jid)
+{
+    d_ptr->sendPresenceRequest(jid, QString("unsubscribe"));
+}
+
+void WAConnection::sendGetLastSeen(const QString &jid)
+{
+    d_ptr->sendGetLastSeen(jid);
+}
+
+void WAConnection::sendGetPicture(const QString &jid)
+{
+    d_ptr->sendGetPicture(jid);
+}
+
+void WAConnection::sendGetPictureIds(const QStringList &jids)
+{
+    d_ptr->sendGetPictureIds(jids);
+}
+
+void WAConnection::sendGetStatuses(const QStringList &jids)
+{
+    d_ptr->sendGetStatuses(jids);
 }
 
 void WAConnection::syncContacts(const QVariantMap &contacts)
