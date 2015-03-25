@@ -1,7 +1,11 @@
 #include "warequest.h"
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 #include <QJsonDocument>
 #include <QJsonParseError>
+#else
+#include "qjson/parser.h"
+#endif
 
 #include <QDebug>
 
@@ -9,7 +13,9 @@ WARequest::WARequest(const QString &url, const QString &ua, QObject *parent) :
     QObject(parent)
 {
     m_url = QUrl(url);
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     m_url_query.clear();
+#endif
     m_ua = ua;
     m_reply = 0;
     m_nam = new QNetworkAccessManager(this);
@@ -17,13 +23,19 @@ WARequest::WARequest(const QString &url, const QString &ua, QObject *parent) :
 
 void WARequest::addParam(QString name, QString value)
 {
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     m_url_query.addQueryItem(name, QUrl::toPercentEncoding(value));
+#else
+    m_url.addQueryItem(name,  QUrl::toPercentEncoding(value));
+#endif
 }
 
 void WARequest::sendRequest()
 {
     if (m_nam) {
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
         m_url.setQuery(m_url_query);
+#endif
         QNetworkRequest request(m_url);
         request.setRawHeader("User-Agent", m_ua.toLatin1());
         request.setRawHeader("Connection", "closed");
@@ -64,6 +76,7 @@ void WARequest::readResult()
     QByteArray json = m_reply->readAll();
     qDebug() << "Reply:" << json;
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(json, &error);
     if (error.error == QJsonParseError::NoError) {
@@ -73,6 +86,18 @@ void WARequest::readResult()
     else {
         Q_EMIT httpError("Cannot parse json reply");
     }
+#else
+    bool no_error = true;
+    QJson::Parser parser;
+    QVariant doc = parser.parse(json,&no_error);
+    if (no_error) {
+        QVariantMap mapResult = doc.toMap();
+        Q_EMIT finished(mapResult);
+    }
+    else {
+        Q_EMIT httpError("Cannot parse json reply");
+    }
+#endif
     m_reply->deleteLater();
 }
 

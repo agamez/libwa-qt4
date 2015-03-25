@@ -1,8 +1,13 @@
 #ifndef WAEXCEPTION_H
 #define WAEXCEPTION_H
 
-#include <QException>
 #include <QString>
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#include <QException>
+#else
+#include "qexception/qexception.h"
+#endif
 
 class WAException : public QException
 {

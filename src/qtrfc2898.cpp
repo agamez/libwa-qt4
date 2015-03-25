@@ -26,10 +26,40 @@
  * official policies, either expressed or implied, of the copyright holder.
  */
 
-#include <QMessageAuthenticationCode>
-
 #include "qtrfc2898.h"
 #include "protocolexception.h"
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#include <QMessageAuthenticationCode>
+#else
+#include <QCryptographicHash>
+// Code taken from http://qt-project.org/wiki/HMAC-SHA1
+QByteArray hash(QByteArray baseString,QByteArray key,QCryptographicHash::Algorithm al)
+{
+    int blockSize = 64; // HMAC-SHA-1 block size, defined in SHA-1 standard
+    if (key.length() > blockSize) { // if key is longer than block size (64), reduce key length with SHA-1 compression
+        key = QCryptographicHash::hash(key, al);
+    }
+
+    QByteArray innerPadding(blockSize, char(0x36)); // initialize inner padding with char "6"
+    QByteArray outerPadding(blockSize, char(0x5c)); // initialize outer padding with char "\"
+    // ascii characters 0x36 ("6") and 0x5c ("\") are selected because they have large
+    // Hamming distance (http://en.wikipedia.org/wiki/Hamming_distance)
+
+    for (int i = 0; i < key.length(); i++) {
+        innerPadding[i] = innerPadding[i] ^ key.at(i); // XOR operation between every byte in key and innerpadding, of key length
+        outerPadding[i] = outerPadding[i] ^ key.at(i); // XOR operation between every byte in key and outerpadding, of key length
+    }
+
+    // result = hash ( outerPadding CONCAT hash ( innerPadding CONCAT baseString ) ).toBase64
+    QByteArray total = outerPadding;
+    QByteArray part = innerPadding;
+    part.append(baseString);
+    total.append(QCryptographicHash::hash(part, al));
+    QByteArray hashed = QCryptographicHash::hash(total, al);
+    return hashed.toBase64();
+}
+#endif
 
 #define SHA1_DIGEST_LENGTH          20
 
@@ -63,13 +93,23 @@ QByteArray QtRFC2898::deriveBytes(const QByteArray& password, const QByteArray& 
         asalt[salt.length() + 2] = (count >> 8) & 0xff;
         asalt[salt.length() + 3] = count & 0xff;
 
-        QByteArray d1 = QMessageAuthenticationCode::hash(asalt, key, QCryptographicHash::Sha1);
+        QByteArray d1 =
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+                QMessageAuthenticationCode::
+#else
+                hash(asalt, key, QCryptographicHash::Sha1);
+#endif
         obuf = d1;
         char *obuf_data = obuf.data();
 
         for (int i = 1; i < iterations; i++)
         {
-            QByteArray d2 = QMessageAuthenticationCode::hash(d1, key, QCryptographicHash::Sha1);
+            QByteArray d2 =
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+                    QMessageAuthenticationCode::
+#else
+                    hash(d1, key, QCryptographicHash::Sha1);
+#endif
             d1 = d2;
             for (int j = 0; j < obuf.length(); j++)
                 obuf_data[j] ^= d1.at(j);

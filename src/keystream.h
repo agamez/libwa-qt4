@@ -31,7 +31,12 @@
 
 #include <QObject>
 #include <QByteArray>
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 #include <QMessageAuthenticationCode>
+#else
+#include <QCryptographicHash>
+#endif
 
 #include "rc4.h"
 
@@ -50,10 +55,16 @@ public:
 
 private:
     QByteArray processBuffer(QByteArray buffer, int seq = 0);
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     QByteArray hmacSha1(const QByteArray &data);
+    QMessageAuthenticationCode *mac;
+#else
+    QByteArray m_key;
+    QByteArray hmacSha1(QByteArray key, QByteArray baseString);
+#endif
 
     RC4 *rc4;
-    QMessageAuthenticationCode *mac;
     int seq;
 
 };

@@ -4,8 +4,11 @@
 #include <QObject>
 
 #include <QNetworkReply>
-#include <QUrlQuery>
 #include <QNetworkAccessManager>
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#include <QUrlQuery>
+#endif
 
 class WARequest : public QObject
 {
@@ -29,10 +32,13 @@ public slots:
 
 private:
     QUrl m_url;
-    QUrlQuery m_url_query;
     QString m_ua;
     QNetworkReply *m_reply;
     QNetworkAccessManager *m_nam;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+    QUrlQuery m_url_query;
+#endif
 
 };
 

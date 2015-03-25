@@ -34,7 +34,11 @@
 KeyStream::KeyStream(QByteArray rc4key, QByteArray mackey, QObject *parent) : QObject(parent)
 {
     rc4 = new RC4(rc4key, 0x300);
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     mac = new QMessageAuthenticationCode(QCryptographicHash::Sha1, mackey);
+#else
+    m_key = mackey;
+#endif
     seq = 0;
 }
 
@@ -44,7 +48,12 @@ bool KeyStream::decodeMessage(QByteArray& buffer, int macOffset, int offset, int
     QByteArray base = buffer.left(buffer.size() - 4);
     QByteArray hmac = buffer.right(4);
     QByteArray buffer2 = processBuffer(base, seq++);
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     buffer2 = hmacSha1(buffer2);
+#else
+    buffer2 = hmacSha1(m_key,buffer2);
+#endif
 
     QByteArray origBuffer = buffer;
     buffer = base;
@@ -71,7 +80,13 @@ void KeyStream::encodeMessage(QByteArray &buffer, int macOffset, int offset, int
     rc4->Cipher(buffer.data(), offset, length);
     QByteArray base = buffer.mid(offset, length);
     base = processBuffer(base, seq++);
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     QByteArray hmac = hmacSha1(base).left(4);
+#else
+    QByteArray hmac = hmacSha1(m_key,base).left(4);
+#endif
+
     buffer.replace(macOffset, 4, hmac.constData(), 4);
 }
 
@@ -99,9 +114,38 @@ QByteArray KeyStream::processBuffer(QByteArray buffer, int seq)
     return buffer;
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 QByteArray KeyStream::hmacSha1(const QByteArray &data)
 {
     mac->reset();
     mac->addData(data);
     return mac->result();
 }
+#else
+// Code taken from http://qt-project.org/wiki/HMAC-SHA1
+QByteArray KeyStream::hmacSha1(QByteArray key, QByteArray baseString)
+{
+    int blockSize = 64; // HMAC-SHA-1 block size, defined in SHA-1 standard
+    if (key.length() > blockSize) { // if key is longer than block size (64), reduce key length with SHA-1 compression
+        key = QCryptographicHash::hash(key, QCryptographicHash::Sha1);
+    }
+
+    QByteArray innerPadding(blockSize, char(0x36)); // initialize inner padding with char "6"
+    QByteArray outerPadding(blockSize, char(0x5c)); // initialize outer padding with char "\"
+    // ascii characters 0x36 ("6") and 0x5c ("\") are selected because they have large
+    // Hamming distance (http://en.wikipedia.org/wiki/Hamming_distance)
+
+    for (int i = 0; i < key.length(); i++) {
+        innerPadding[i] = innerPadding[i] ^ key.at(i); // XOR operation between every byte in key and innerpadding, of key length
+        outerPadding[i] = outerPadding[i] ^ key.at(i); // XOR operation between every byte in key and outerpadding, of key length
+    }
+
+    // result = hash ( outerPadding CONCAT hash ( innerPadding CONCAT baseString ) ).toBase64
+    QByteArray total = outerPadding;
+    QByteArray part = innerPadding;
+    part.append(baseString);
+    total.append(QCryptographicHash::hash(part, QCryptographicHash::Sha1));
+    QByteArray hashed = QCryptographicHash::hash(total, QCryptographicHash::Sha1);
+    return hashed.toBase64();
+}
+#endif
