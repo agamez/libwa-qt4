@@ -4,7 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonParseError>
 #else
-#include "qjson/parser.h"
+#include "json.h"
 #endif
 
 #include <QDebug>
@@ -88,8 +88,7 @@ void WARequest::readResult()
     }
 #else
     bool no_error = true;
-    QJson::Parser parser;
-    QVariant doc = parser.parse(json,&no_error);
+    QVariant doc = QtJson::parse(json, no_error);
     if (no_error) {
         QVariantMap mapResult = doc.toMap();
         Q_EMIT finished(mapResult);

@@ -9,7 +9,6 @@
 
 #include "waconnection.h"
 
-#include "funrequest.h"
 #include "protocoltreenode.h"
 #include "bintreenodewriter.h"
 #include "bintreenodereader.h"

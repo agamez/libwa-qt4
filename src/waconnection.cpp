@@ -390,10 +390,6 @@ int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node)
 
 int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node, const char *member)
 {
-    /*FunRequest *request = new FunRequest(this);
-    m_bindStore[node.getAttributeValue("id")] = request;
-    QObject::connect(request, SIGNAL(reply(ProtocolTreeNode)), this, member);*/
-
     m_bindStore[node.getAttributeValue("id")] = member;
 
     return sendRequest(node);
@@ -850,8 +846,6 @@ bool WAConnectionPrivate::read()
 
         QString id = node.getAttributeValue("id");
         if (m_bindStore.contains(id)) {
-            //FunRequest *funRequest = m_bindStore.take(id);
-            //Q_EMIT funRequest->reply(node);
             QMetaObject::invokeMethod(this, m_bindStore.take(id), Q_ARG(ProtocolTreeNode, node));
             handled = true;
         }
@@ -1017,11 +1011,6 @@ void WAConnectionPrivate::connectionServerProperties(const ProtocolTreeNode &nod
         }
     }
     Q_EMIT q_ptr->serverProperties(props);
-
-    /*FunRequest *request = qobject_cast<FunRequest*>(sender());
-    if (request) {
-        request->deleteLater();
-    }*/
 }
 
 void WAConnectionPrivate::contactLastSeen(const ProtocolTreeNode &node)

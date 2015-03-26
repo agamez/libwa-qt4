@@ -28,12 +28,6 @@
 
 #include <QDataStream>
 
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
-#include <QGuiApplication>
-#else
-#include <QApplication>
-#endif
-
 #include "attributelist.h"
 #include "bintreenodereader.h"
 

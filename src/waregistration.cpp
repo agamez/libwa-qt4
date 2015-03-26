@@ -2,12 +2,6 @@
 #include "warequest.h"
 #include "waconstants.h"
 
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
-#include <QJsonDocument>
-#include <QJsonParseError>
-#include <QUrlQuery>
-#endif
-
 #include <QNetworkAccessManager>
 #include <QStringList>
 

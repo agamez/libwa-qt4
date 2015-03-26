@@ -16,7 +16,6 @@ HEADERS += \
     src/libwa.h \
     src/waconnection.h \
     src/waconnection_p.h \
-    src/funrequest.h \
     src/warequest.h \
     src/waconstants.h \
     src/attributelist.h \
@@ -32,12 +31,12 @@ HEADERS += \
     src/qtrfc2898.h \
     src/protocolexception.h \
     src/waexception.h \
-    src/watokendictionary.h
+    src/watokendictionary.h \
+    src/hmacsha1.h
 
 SOURCES += \
     src/waregistration.cpp \
     src/waconnection.cpp \
-    src/funrequest.cpp \
     src/warequest.cpp \
     src/attributelist.cpp \
     src/attributelistiterator.cpp \
@@ -50,4 +49,14 @@ SOURCES += \
     src/protocoltreenodelistiterator.cpp \
     src/rc4.cpp \
     src/qtrfc2898.cpp \
-    src/watokendictionary.cpp
+    src/watokendictionary.cpp \
+    src/hmacsha1.cpp
+
+lessThan(QT_MAJOR_VERSION, 5) {
+HEADERS += \
+    src/qexception/qexception.h \
+    src/json.h
+SOURCES +=  \
+    src/qexception/qexception.cpp \
+    src/json.cpp
+}
