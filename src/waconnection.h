@@ -84,11 +84,17 @@ signals:
     void groupParticipantDemoted(const QString &gjid, const QString &jid);
     void groupSubjectChanged(const QString &gjid, const QString &subject, const QString &s_o, const QString &s_t);
     void groupCreated(const QString &gjid, const QString &creation, const QString &creator, const QString &s_o, const QString &s_t, const QString &subject, const QStringList &participants, const QStringList &admins);
-    void messageReceipt(const QString &jid, const QString &msgId, const QString &type);
+    void messageReceipt(const QString &jid, const QString &msgId, const QString &participant, const QString &timestamp, const QString &type);
     void contactsSynced(const QVariantMap &jids);
     void contactAvailable(const QString &jid);
     void contactUnavailable(const QString &jid, const QString &last);
     void groupsReceived(const QVariantMap &groups);
+
+    void contactTypingPaused(const QString &jid);
+    void contactTypingStarted(const QString &jid);
+
+    void textMessageReceived(const QString &jid, const QString &id, const QString &timestamp, const QString &author, bool offline, const QString &data);
+    void mediaMessageReceived(const QString &jid, const QString &id, const QString &timestamp, const QString &author, bool offline, const AttributeList &attrs, const QByteArray &data);
 
     void connectionStatusChanged(int newConnectionStatus);
     void contactsNotification(const QString &type, const AttributeList &attributes);

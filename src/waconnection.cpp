@@ -549,14 +549,6 @@ void WAConnectionPrivate::parsePictureNotification(const ProtocolTreeNode &node)
     }
 }
 
-void WAConnectionPrivate::parseSubjectNotification(const ProtocolTreeNode &node)
-{
-    if (node.getChildren().contains("set")) {
-        QString subject = node.getChild("set").getDataString();
-        //Q_EMIT q_ptr->subjectNotification(subject, node.getAttributeValue("from"));
-    }
-}
-
 void WAConnectionPrivate::parseStatusNotification(const ProtocolTreeNode &node)
 {
     if (node.getChildren().contains("set")) {
@@ -658,6 +650,17 @@ void WAConnectionPrivate::parsePresence(const ProtocolTreeNode &node)
     }
     else {
         Q_EMIT q_ptr->contactAvailable(jid);
+    }
+}
+
+void WAConnectionPrivate::parseChatstate(const ProtocolTreeNode &node)
+{
+    QString jid = node.getAttributeValue("from");
+    if (node.getChildren().contains("paused")) {
+        Q_EMIT q_ptr->contactTypingPaused(jid);
+    }
+    else if (node.getChildren().contains("composing")) {
+        Q_EMIT q_ptr->contactTypingStarted(jid);
     }
 }
 
@@ -796,7 +799,22 @@ void WAConnectionPrivate::sendResult(const QString &id)
 
 void WAConnectionPrivate::parseMessage(const ProtocolTreeNode &node)
 {
-
+    QString jid = node.getAttributeValue("from");
+    QString id = node.getAttributeValue("id");
+    QString timestamp = node.getAttributeValue("t");
+    QString type = node.getAttributeValue("type");
+    if (type == "text") {
+        if (node.getChildren().contains("body")) {
+            ProtocolTreeNode bodyNode = node.getChild("body");
+            Q_EMIT q_ptr->textMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), bodyNode.getDataString());
+        }
+    }
+    else if (type == "media") {
+        if (node.getChildren().contains("media")) {
+            ProtocolTreeNode mediaNode = node.getChild("media");
+            Q_EMIT q_ptr->mediaMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), mediaNode.getAttributes(), mediaNode.getData());
+        }
+    }
 }
 
 ProtocolTreeNode WAConnectionPrivate::getTextBody(const QString &text)
@@ -922,7 +940,7 @@ bool WAConnectionPrivate::read()
             }
             else if (tag == "receipt")
             {
-                Q_EMIT q_ptr->messageReceipt(node.getAttributeValue("from"), node.getAttributeValue("id"), node.getAttributeValue("type"));
+                Q_EMIT q_ptr->messageReceipt(node.getAttributeValue("from"), node.getAttributeValue("id"), node.getAttributeValue("participant"), node.getAttributeValue("t"), node.getAttributeValue("type"));
                 sendReceiptAck(node);
                 handled = true;
             }
@@ -948,6 +966,11 @@ bool WAConnectionPrivate::read()
             else if (tag == "presence")
             {
                 parsePresence(node);
+                handled = true;
+            }
+            else if (tag == "chatstate")
+            {
+                parseChatstate(node);
                 handled = true;
             }
         }

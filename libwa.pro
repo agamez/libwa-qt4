@@ -32,7 +32,8 @@ HEADERS += \
     src/protocolexception.h \
     src/waexception.h \
     src/watokendictionary.h \
-    src/hmacsha1.h
+    src/hmacsha1.h \
+    src/json.h
 
 SOURCES += \
     src/waregistration.cpp \
@@ -50,13 +51,14 @@ SOURCES += \
     src/rc4.cpp \
     src/qtrfc2898.cpp \
     src/watokendictionary.cpp \
-    src/hmacsha1.cpp
+    src/hmacsha1.cpp \
+    src/json.cpp
 
 lessThan(QT_MAJOR_VERSION, 5) {
 HEADERS += \
     src/qexception/qexception.h \
-    src/json.h
+    src/qtjson.h
 SOURCES +=  \
     src/qexception/qexception.cpp \
-    src/json.cpp
+    src/qtjson.cpp
 }

@@ -67,10 +67,10 @@ private:
     void parseSuccessNode(const ProtocolTreeNode &node);
     void parseContactsNotification(const ProtocolTreeNode &node);
     void parsePictureNotification(const ProtocolTreeNode &node);
-    void parseSubjectNotification(const ProtocolTreeNode &node);
     void parseStatusNotification(const ProtocolTreeNode &node);
     void parseGroupNotification(const ProtocolTreeNode &node);
     void parsePresence(const ProtocolTreeNode &node);
+    void parseChatstate(const ProtocolTreeNode &node);
 
     QString makeId(const QString &prefix);
     QString messageId();

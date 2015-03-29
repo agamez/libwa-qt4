@@ -1,11 +1,5 @@
 #include "warequest.h"
-
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
-#include <QJsonDocument>
-#include <QJsonParseError>
-#else
 #include "json.h"
-#endif
 
 #include <QDebug>
 
@@ -76,27 +70,14 @@ void WARequest::readResult()
     QByteArray json = m_reply->readAll();
     qDebug() << "Reply:" << json;
 
-#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(json, &error);
-    if (error.error == QJsonParseError::NoError) {
-        QVariantMap mapResult = doc.toVariant().toMap();
-        Q_EMIT finished(mapResult);
-    }
-    else {
+    QVariant doc = Json::parse(json);
+    if (doc.isNull() || !doc.isValid()) {
         Q_EMIT httpError("Cannot parse json reply");
     }
-#else
-    bool no_error = true;
-    QVariant doc = QtJson::parse(json, no_error);
-    if (no_error) {
+    else {
         QVariantMap mapResult = doc.toMap();
         Q_EMIT finished(mapResult);
     }
-    else {
-        Q_EMIT httpError("Cannot parse json reply");
-    }
-#endif
     m_reply->deleteLater();
 }
 
