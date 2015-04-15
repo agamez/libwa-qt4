@@ -33,7 +33,9 @@ void WARequest::sendRequest()
         QNetworkRequest request(m_url);
         request.setRawHeader("User-Agent", m_ua.toLatin1());
         request.setRawHeader("Connection", "closed");
-        qDebug() << "User-Agent" << m_ua;
+        foreach (const QByteArray &header, request.rawHeaderList()) {
+            qDebug() << header << request.rawHeader(header);
+        }
         qDebug() << "WARequest:" << request.url().toString();
 
         m_reply = m_nam->get(request);

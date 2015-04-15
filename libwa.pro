@@ -1,14 +1,24 @@
 TEMPLATE = lib
 
 TARGET = wa-qt5
-target.path = /usr/share/harbour-mitakuuluu3/lib
+isEmpty(CURRENT_RPATH_DIR) {
+    taget.path = /usr/lib
+} else {
+    message("$$TARGET QMAKE_RPATHDIR and PATH is set to $$CURRENT_RPATH_DIR")
+    target.path = $$CURRENT_RPATH_DIR
+    QMAKE_RPATHDIR += $$INSTALL_ROOT$$CURRENT_RPATH_DIR
+}
+VERSION = 1.0.0
 
-QT += network
+QT += network sql
 CONFIG += dll
 
 INSTALLS += target
 
 DEFINES += LIBWA_LIBRARY
+
+LIBS += -L../libaxolotl -laxolotl
+LIBS += -L../libcurve25519 -lcurve25519
 
 HEADERS += \
     src/waregistration.h \
@@ -33,7 +43,12 @@ HEADERS += \
     src/waexception.h \
     src/watokendictionary.h \
     src/hmacsha1.h \
-    src/json.h
+    src/json.h \
+    src/axolotl/litesignedprekeystore.h \
+    src/axolotl/litesessionstore.h \
+    src/axolotl/liteprekeystore.h \
+    src/axolotl/liteidentitykeystore.h \
+    src/axolotl/liteaxolotlstore.h
 
 SOURCES += \
     src/waregistration.cpp \
@@ -52,7 +67,12 @@ SOURCES += \
     src/qtrfc2898.cpp \
     src/watokendictionary.cpp \
     src/hmacsha1.cpp \
-    src/json.cpp
+    src/json.cpp \
+    src/axolotl/litesignedprekeystore.cpp \
+    src/axolotl/litesessionstore.cpp \
+    src/axolotl/liteprekeystore.cpp \
+    src/axolotl/liteidentitykeystore.cpp \
+    src/axolotl/liteaxolotlstore.cpp
 
 lessThan(QT_MAJOR_VERSION, 5) {
 HEADERS += \

@@ -3,14 +3,27 @@
 #include "waconstants.h"
 #include "protocoltreenodelistiterator.h"
 
+#include "../libaxolotl/util/keyhelper.h"
+#include "../libaxolotl/protocol/prekeywhispermessage.h"
+#include "../libaxolotl/protocol/whispermessage.h"
+#include "../libaxolotl/whisperexception.h"
+
 #include <QDateTime>
 #include <QMetaObject>
 #include <QThread>
+#include <QSqlError>
+#include <QFile>
+#include <QTimer>
+#include <QUuid>
 
 WAConnectionPrivate::WAConnectionPrivate(WAConnection *q):
     QObject(q),
     q_ptr(q),
-    m_isReading(false)
+    m_isReading(false),
+    m_passive(false),
+    m_passiveCount(0),
+    m_passiveGroups(false),
+    m_passiveReconnect(false)
 {
 }
 
@@ -22,6 +35,9 @@ void WAConnectionPrivate::init()
     in = new BinTreeNodeReader(socket, dict, this);
     iqid = 0;
     mseq = 0;
+    sessionTime = QDateTime::currentDateTime().toTime_t();
+
+    axolotlStore.reset(new LiteAxolotlStore(AXOLOTL_DB_CONNECTION));
 
     q_ptr->m_connectionStatus = WAConnection::Disconnected;
     Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
@@ -37,49 +53,56 @@ void WAConnectionPrivate::readNode()
 
 void WAConnectionPrivate::login(const QVariantMap &loginData)
 {
+    m_domain = QString(JID_DOMAIN);
     m_username = loginData["login"].toString();
+    m_jid = QString("%1%2").arg(m_username).arg(m_domain);
     m_password = loginData["password"].toByteArray();
     m_password = QByteArray::fromBase64(m_password);
     m_resource = loginData["resource"].toString();
+    m_encryptionav = loginData["encryptionav"].toString();
     m_userAgent = loginData["userAgent"].toString();
     m_mcc = loginData["mcc"].toString();
     m_mnc = loginData["mnc"].toString();
     m_nextChallenge = loginData["nextChallenge"].toByteArray();
     if (m_nextChallenge.size() > 0)
         m_nextChallenge = QByteArray::fromBase64(m_nextChallenge);
-    m_domain = QString(JID_DOMAIN);
+    QString database = loginData["database"].toString();
+    axolotlStore->setDatabaseName(database);
+    m_servers = loginData["servers"].toStringList();
+    m_passive = loginData["passive"].toBool();
 
-    connect(socket, SIGNAL(connected()), this, SLOT(socketConnected()));
-    connect(socket, SIGNAL(error(QAbstractSocket::SocketError)),
-            this, SLOT(socketError(QAbstractSocket::SocketError)));
-    connect(socket, SIGNAL(disconnected()), this, SLOT(socketDisconnected()));
-
-    q_ptr->m_connectionStatus = WAConnection::Connecting;
-    Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
-
-    QString server = loginData["server"].toString();
-    qDebug() << "Connecting to" << server + ":443";
-    socket->connectToHost(server, 443);
+    loginInternal();
 }
 
 void WAConnectionPrivate::logout()
 {
-    socket->disconnectFromHost();
+    if (q_ptr->m_connectionStatus >= WAConnection::Initiaization) {
+        sendSetPresence(false);
+        out->streamEnd();
+    }
+    if (socket->isOpen()) {
+        socket->disconnectFromHost();
+    }
+}
+
+void WAConnectionPrivate::reconnect()
+{
+    if (!m_username.isEmpty()) {
+        loginInternal();
+    }
 }
 
 void WAConnectionPrivate::sendGetProperties()
 {
-    QString id = makeId("get_server_properties_");
-
-    ProtocolTreeNode propsNode("props");
-
     ProtocolTreeNode iqNode("iq");
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("type","get");
     attrs.insert("to", m_domain);
     attrs.insert("xmlns", "w");
     iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode propsNode("props");
     iqNode.addChild(propsNode);
 
     int bytes = sendRequest(iqNode, WAREPLY(connectionServerProperties));
@@ -88,20 +111,18 @@ void WAConnectionPrivate::sendGetProperties()
 
 void WAConnectionPrivate::sendPing()
 {
-    QString id = makeId("ping_");
-
-    ProtocolTreeNode pingNode("ping");
-
     ProtocolTreeNode iqNode("iq");
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("to", m_domain);
     attrs.insert("type", "get");
     attrs.insert("xmlns", "w:p");
     iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode pingNode("ping");
     iqNode.addChild(pingNode);
 
-    int bytes = sendRequest(iqNode);
+    int bytes = sendRequest(iqNode, WAREPLY(onPong));
     //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
 }
 
@@ -110,18 +131,15 @@ void WAConnectionPrivate::sendGetLastSeen(const QString &jid)
     if (jid.contains("-"))
         return;
 
-    QString id = makeId("lastseen_");
-
-    ProtocolTreeNode queryNode("query");
-
     ProtocolTreeNode iqNode("iq");
-
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("type", "get");
     attrs.insert("to", jid);
     attrs.insert("xmlns", "jabber:iq:last");
     iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode queryNode("query");
     iqNode.addChild(queryNode);
 
     int bytes = sendRequest(iqNode, WAREPLY(contactLastSeen));
@@ -130,8 +148,6 @@ void WAConnectionPrivate::sendGetLastSeen(const QString &jid)
 
 void WAConnectionPrivate::sendGetStatuses(const QStringList &jids)
 {
-    QString id = makeId("getstatus_");
-
     ProtocolTreeNode statusNode("status");
 
     AttributeList attrs;
@@ -149,7 +165,7 @@ void WAConnectionPrivate::sendGetStatuses(const QStringList &jids)
 
     ProtocolTreeNode iqNode("iq");
     attrs.clear();
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("to", m_domain);
     attrs.insert("type", "get");
     attrs.insert("xmlns", "status");
@@ -162,22 +178,18 @@ void WAConnectionPrivate::sendGetStatuses(const QStringList &jids)
 
 void WAConnectionPrivate::sendGetPicture(const QString &jid)
 {
-    AttributeList attrs;
-
-    QString id = makeId("get_picture_");
-
-    ProtocolTreeNode pictureNode("picture");
-    attrs.insert("type", "image");
-    pictureNode.setAttributes(attrs);
-
     ProtocolTreeNode iqNode("iq");
-
-    attrs.clear();
-    attrs.insert("id", id);
+    AttributeList attrs;
+    attrs.insert("id", makeId());
     attrs.insert("type", "get");
     attrs.insert("to", jid);
     attrs.insert("xmlns", "w:profile:picture");
     iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode pictureNode("picture");
+    attrs.clear();
+    attrs.insert("type", "image");
+    pictureNode.setAttributes(attrs);
     iqNode.addChild(pictureNode);
 
     int bytes = sendRequest(iqNode, WAREPLY(contactPicture));
@@ -186,12 +198,15 @@ void WAConnectionPrivate::sendGetPicture(const QString &jid)
 
 void WAConnectionPrivate::sendGetPictureIds(const QStringList &jids)
 {
-    QString id = makeId("get_picture_id_");
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("to", m_domain);
+    attrs.insert("type", "get");
+    attrs.insert("xmlns", "w:profile:picture");
+    iqNode.setAttributes(attrs);
 
     ProtocolTreeNode listNode("list");
-
-    AttributeList attrs;
-
     foreach (QString jid, jids) {
         if (jid.contains("@"))
         {
@@ -202,14 +217,7 @@ void WAConnectionPrivate::sendGetPictureIds(const QStringList &jids)
             listNode.addChild(userNode);
         }
     }
-
-    ProtocolTreeNode iqNode("iq");
     attrs.clear();
-    attrs.insert("id", id);
-    attrs.insert("to", m_domain);
-    attrs.insert("type", "get");
-    attrs.insert("xmlns", "w:profile:picture");
-    iqNode.setAttributes(attrs);
     iqNode.addChild(listNode);
 
     int bytes = sendRequest(iqNode, WAREPLY(contactsPicrureIds));
@@ -230,6 +238,46 @@ void WAConnectionPrivate::sendPresenceRequest(const QString &jid, const QString 
     int bytes = sendRequest(presenceNode);
 }
 
+void WAConnectionPrivate::sendGetPrivacyList()
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("type", "get");
+    attrs.insert("xmlns", "jabber:iq:privacy");
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode listNode("list");
+    attrs.clear();
+    attrs.insert("name", "default");
+    listNode.setAttributes(attrs);
+
+    ProtocolTreeNode queryNode("query");
+    queryNode.addChild(listNode);
+
+    iqNode.addChild(queryNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(privacyList));
+    //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
+}
+
+void WAConnectionPrivate::sendGetPushConfig()
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("type", "get");
+    attrs.insert("to", m_domain);
+    attrs.insert("xmlns", "urn:xmpp:whatsapp:push");
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode configNode("config");
+    iqNode.addChild(configNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(pushConfig));
+    //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
+}
+
 void WAConnectionPrivate::sendSetPresence(bool available, const QString &pushname)
 {
     ProtocolTreeNode presenceNode("presence");
@@ -244,21 +292,53 @@ void WAConnectionPrivate::sendSetPresence(bool available, const QString &pushnam
     int bytes = sendRequest(presenceNode);
 }
 
-void WAConnectionPrivate::sendNormalText(const QString &jid, const QString &text)
+void WAConnectionPrivate::sendText(const QString &jid, const QString &text, const QString &msgId)
 {
-    ProtocolTreeNode body = getTextBody(text);
-    ProtocolTreeNode message = getMessageNode(jid, "text");
-    message.addChild(body);
-    int bytes = sendRequest(message);
+    if (q_ptr->m_connectionStatus != WAConnection::LoggedIn) {
+        return;
+    }
+
+    ProtocolTreeNode message = getMessageNode(jid, "text", msgId);
+    if (m_resource.startsWith("S40") || !jid.contains(m_domain) || skipEncodingJids.contains(jid)) {
+        ProtocolTreeNode body = getTextBody(text);
+        message.addChild(body);
+    }
+    else {
+        qulonglong recepientId = getRecepient(jid);
+        if (axolotlStore->containsSession(recepientId, 1)) {
+            SessionCipher *cipher = getSessionCipher(recepientId);
+            QSharedPointer<CiphertextMessage> ciphertext = cipher->encrypt(text.toUtf8());
+
+            ProtocolTreeNode encNode("enc");
+            AttributeList attrs;
+            attrs.insert("type", ciphertext->getType() == CiphertextMessage::WHISPER_TYPE ? "msg" : "pkmsg");
+            attrs.insert("av", m_encryptionav);
+            attrs.insert("v", "1");
+            encNode.setAttributes(attrs);
+            encNode.setData(ciphertext->serialize());
+            message.addChild(encNode);
+        }
+        else  {
+            pendingMessages[jid] = text;
+            sendGetEncryptKeys(QStringList() << jid);
+            return;
+        }
+    }
+    int bytes = sendRequest(message, WAREPLY(messageSent));
+
+    Q_EMIT q_ptr->textMessageSent(jid, message.getAttributeValue("id"), QString::number(QDateTime::currentDateTime().toTime_t()), text);
 }
 
 void WAConnectionPrivate::sendBroadcastText(const QString &jid, const QString &text, const QStringList &jids)
 {
-    ProtocolTreeNode body = getTextBody(text);
-    ProtocolTreeNode broadcast = getBroadcastNode(jids);
     ProtocolTreeNode message = getMessageNode(jid, "text");
+
+    ProtocolTreeNode broadcast = getBroadcastNode(jids);
     message.addChild(broadcast);
+
+    ProtocolTreeNode body = getTextBody(text);
     message.addChild(body);
+
     int bytes = sendRequest(message);
 }
 
@@ -267,16 +347,19 @@ void WAConnectionPrivate::sendMessageRead(const QString &jid, const QString &msg
     sendMessageReceived(jid, msgId, QString("read"), participant);
 }
 
+void WAConnectionPrivate::sendRetryMessage(const QString &jid, const QString &msgId, const QString &data)
+{
+    sendText(jid, data, msgId);
+}
+
 void WAConnectionPrivate::syncContacts(const QVariantMap &contacts)
 {
     syncing = contacts;
-    sendSync(syncing.keys(), QStringList());
+    sendSync(syncing.keys(), QStringList(), m_passive ? 0 : 3);
 }
 
 void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStringList &deleteJids, int syncType, int index, bool last)
 {
-    QString id = makeId("sendsync_");
-
     QString mode("delta");
     QString context("background");
 
@@ -325,7 +408,8 @@ void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStrin
     attrs.insert("context", context);
     attrs.insert("index", QString::number(index));
     attrs.insert("last", last ? "true" : "false");
-    attrs.insert("sid", QString::number((QDateTime::currentDateTimeUtc().toTime_t() + 11644477200) * 10000000));
+    QString uuid = QUuid::createUuid().toString().mid(1, 36);
+    attrs.insert("sid", QString("sync_sid_%1_%2").arg(mode).arg(uuid));
     syncNode.setAttributes(attrs);
 
     foreach (QString syncNumber, syncContacts) {
@@ -355,7 +439,7 @@ void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStrin
 
     ProtocolTreeNode iqNode("iq");
     attrs.clear();
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("xmlns", "urn:xmpp:whatsapp:sync");
     attrs.insert("type", "get");
     iqNode.setAttributes(attrs);
@@ -364,14 +448,38 @@ void WAConnectionPrivate::sendSync(const QStringList &syncContacts, const QStrin
     int bytes = sendRequest(iqNode, WAREPLY(syncResponse));
 }
 
+void WAConnectionPrivate::sendGetFeatures(const QStringList &jids)
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("xmlns", "features");
+    attrs.insert("type", "get");
+    attrs.insert("to", m_domain);
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode featureNode("feature");
+
+    ProtocolTreeNode listNode("list");
+    foreach (const QString &jid, jids) {
+        ProtocolTreeNode userNode("user");
+        AttributeList userAttrs;
+        userAttrs.insert("jid", jid);
+        userNode.setAttributes(userAttrs);
+        listNode.addChild(userNode);
+    }
+    featureNode.addChild(listNode);
+    iqNode.addChild(featureNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(featureResponse));
+}
+
 void WAConnectionPrivate::sendGetGroups(const QString &type)
 {
-    QString id = makeId("get_groups_");
-
     ProtocolTreeNode iqNode("iq");
 
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("type", "get");
     attrs.insert("to", "g.us");
     attrs.insert("xmlns", "w:g2");
@@ -383,16 +491,58 @@ void WAConnectionPrivate::sendGetGroups(const QString &type)
     int bytes = sendRequest(iqNode, WAREPLY(groupsResponse));
 }
 
+void WAConnectionPrivate::sendGetBroadcasts()
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("xmlns", "w:b");
+    attrs.insert("type", "get");
+    attrs.insert("to", m_domain);
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode listsNode("lists");
+    iqNode.addChild(listsNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(broadcastsResponse));
+}
+
+void WAConnectionPrivate::sendTyping(const QString &jid, bool typing)
+{
+    ProtocolTreeNode messageNode("chatstate");
+    AttributeList attrs;
+    attrs.insert("to", jid);
+    messageNode.setAttributes(attrs);
+
+    ProtocolTreeNode composingNode(typing ? "composing" : "paused");
+    messageNode.addChild(composingNode);
+
+    int bytes = sendRequest(messageNode);
+    //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
+}
+
+void WAConnectionPrivate::getEncryptionStatus(const QString &jid)
+{
+    if (q_ptr->m_connectionStatus == WAConnection::LoggedIn) {
+        qulonglong recepientId = getRecepient(jid);
+        bool encrypted = axolotlStore->containsSession(recepientId, 1) || cipherHash.contains(recepientId);
+        Q_EMIT q_ptr->encryptionStatus(jid, encrypted);
+    }
+}
+
 int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node)
 {
-    return out->write(node, false);
+    if (socket->isOpen()) {
+        return out->write(node, false);
+    }
 }
 
 int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node, const char *member)
 {
-    m_bindStore[node.getAttributeValue("id")] = member;
-
-    return sendRequest(node);
+    if (socket->isOpen()) {
+        m_bindStore[node.getAttributeValue("id")] = member;
+        return sendRequest(node);
+    }
 }
 
 void WAConnectionPrivate::tryLogin()
@@ -408,17 +558,38 @@ void WAConnectionPrivate::tryLogin()
     //counters->increaseCounter(DataCounters::ProtocolBytes, inBytes, outBytes);
 }
 
+void WAConnectionPrivate::loginInternal()
+{
+    connect(socket, SIGNAL(connected()), this, SLOT(socketConnected()));
+    connect(socket, SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(socketError(QAbstractSocket::SocketError)));
+    connect(socket, SIGNAL(disconnected()), this, SLOT(socketDisconnected()));
+
+    q_ptr->m_connectionStatus = WAConnection::Connecting;
+    Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+
+    QTime midnight(0,0,0);
+    qsrand(midnight.secsTo(QTime::currentTime()));
+    QString server = m_servers.at(qrand() % m_servers.size());
+
+    qDebug() << "Connecting to" << server + ":443";
+    socket->connectToHost(server, 443);
+}
+
 int WAConnectionPrivate::sendFeatures()
 {
-    ProtocolTreeNode child1("readreceipts");
-    ProtocolTreeNode child2("groups_v2");
-    ProtocolTreeNode child3("privacy");
-    ProtocolTreeNode child4("presence");
-
     ProtocolTreeNode node("stream:features");
+
+    ProtocolTreeNode child1("readreceipts");
     node.addChild(child1);
+
+    ProtocolTreeNode child2("groups_v2");
     node.addChild(child2);
+
+    ProtocolTreeNode child3("privacy");
     node.addChild(child3);
+
+    ProtocolTreeNode child4("presence");
     node.addChild(child4);
 
     return sendRequest(node);
@@ -426,17 +597,19 @@ int WAConnectionPrivate::sendFeatures()
 
 int WAConnectionPrivate::sendAuth()
 {
-    QByteArray data;
-    if (m_nextChallenge.size() > 0)
-        data = getAuthBlob(m_nextChallenge);
-
     AttributeList attrs;
-    attrs.insert("passive", "false");
+    if (m_passive) {
+        attrs.insert("passive", "true");
+    }
     attrs.insert("mechanism", "WAUTH-2");
     attrs.insert("user", m_username);
+    qDebug() << "Sending" << "WAUTH-2" << "for" << m_username;
 
-    ProtocolTreeNode node("auth", data);
+    ProtocolTreeNode node("auth");
     node.setAttributes(attrs);
+    if (m_nextChallenge.size() > 0)
+        node.setData(getAuthBlob(m_nextChallenge));
+
     int bytes = sendRequest(node);
     if (m_nextChallenge.size() > 0)
         out->setCrypto(true);
@@ -464,6 +637,7 @@ QByteArray WAConnectionPrivate::getAuthBlob(const QByteArray &nonce)
     if (!m_mcc.isEmpty() && !m_mnc.isEmpty()) {
         list.append(QString(" MccMnc/%1%2").arg(m_mcc).arg(m_mnc));
     }
+    qDebug() << list.mid(4 + m_username.size() + nonce.size());
 
     outputKey->encodeMessage(list, 0, 4, list.length()-4);
 
@@ -483,33 +657,41 @@ int WAConnectionPrivate::sendResponse(const QByteArray &challengeData)
 
 void WAConnectionPrivate::parseSuccessNode(const ProtocolTreeNode &node)
 {
-    if (node.getTag() == "success") {
-        AttributeList accountData = node.getAttributes();
+    AttributeList accountData = node.getAttributes();
 
-        if (node.getAttributeValue("status") == "expired") {
-            Q_EMIT q_ptr->accountExpired(accountData);
+    if (node.getAttributeValue("status") == "expired") {
+        Q_EMIT q_ptr->accountExpired(accountData);
 
-            logout();
-            return;
-        }
+        logout();
+        return;
+    }
 
-        accountData["nextChallenge"] = QString(node.getData().toBase64());
+    m_nextChallenge = node.getData();
+    accountData["nextChallenge"] = QString(m_nextChallenge.toBase64());
 
-        Q_EMIT q_ptr->authSuccess(accountData);
+    if (!m_passive && m_resource.startsWith("S40") && axolotlStore->countPreKeys() == 0) {
+        sendEncrypt();
+    }
 
-        //sendClientConfig();
+    Q_EMIT q_ptr->authSuccess(accountData);
 
-        //sendPing();
+    retry = 0;
+
+    sendGetPrivacyList();
+    sendGetPushConfig();
+
+    if (m_passive) {
+
+        q_ptr->m_connectionStatus = WAConnection::Initiaization;
+        Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+    }
+    else {
+        sendPing();
 
         //lastActivity = QDateTime::currentDateTime().toTime_t();
 
         q_ptr->m_connectionStatus = WAConnection::LoggedIn;
         Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
-    }
-    else {
-        Q_EMIT q_ptr->authFailed(node.getAttributes());
-
-        logout();
     }
 }
 
@@ -642,6 +824,48 @@ void WAConnectionPrivate::parseGroupNotification(const ProtocolTreeNode &node)
     }
 }
 
+void WAConnectionPrivate::parseEncryptNotification(const ProtocolTreeNode &node)
+{
+    if (node.getChildren().contains("count")) {
+        ProtocolTreeNode countNode = node.getChild("count");
+        int prekeysRemaining = countNode.getAttributeValue("value").toInt();
+        if (prekeysRemaining <= 10) {
+            sendEncrypt(false);
+        }
+    }
+}
+
+void WAConnectionPrivate::parseReceipt(const ProtocolTreeNode &node)
+{
+    QString type = node.getAttributeValue("type");
+    if (type == "retry") {
+        if (node.getChildren().contains("registration")) {
+            QString jid = node.getAttributeValue("from");
+            qulonglong recepientId = getRecepient(jid);
+            axolotlStore->deleteSession(recepientId, 1);
+            axolotlStore->removeIdentity(recepientId);
+            Q_EMIT q_ptr->retryMessage(node.getAttributeValue("id"), jid);
+        }
+    }
+    else {
+        if (node.getChildren().contains("list")) {
+            parseReceiptList(node);
+        }
+        Q_EMIT q_ptr->messageReceipt(node.getAttributeValue("from"), node.getAttributeValue("id"), node.getAttributeValue("participant"), node.getAttributeValue("t"), node.getAttributeValue("type"));
+    }
+}
+
+void WAConnectionPrivate::parseReceiptList(const ProtocolTreeNode &node)
+{
+    ProtocolTreeNode listNode = node.getChild("list");
+    ProtocolTreeNodeListIterator i(listNode.getChildren());
+    while (i.hasNext())
+    {
+        ProtocolTreeNode itemNode = i.next().value();
+        Q_EMIT q_ptr->messageReceipt(node.getAttributeValue("from"), itemNode.getAttributeValue("id"), node.getAttributeValue("participant"), node.getAttributeValue("t"), node.getAttributeValue("type"));
+    }
+}
+
 void WAConnectionPrivate::parsePresence(const ProtocolTreeNode &node)
 {
     QString jid = node.getAttributeValue("from");
@@ -664,24 +888,41 @@ void WAConnectionPrivate::parseChatstate(const ProtocolTreeNode &node)
     }
 }
 
-QString WAConnectionPrivate::makeId(const QString &prefix)
+void WAConnectionPrivate::parseCall(const ProtocolTreeNode &node)
 {
-    return prefix + QString::number(++iqid, 16);
+    QString jid = node.getAttributeValue("from");
+    ProtocolTreeNodeListIterator i(node.getChildren());
+    while (i.hasNext())
+    {
+        ProtocolTreeNode itemNode = i.next().value();
+        QString tag = itemNode.getTag();
+        if (tag == "offer") {
+            sendCallReceipt(node);
+            sendCallReject(jid, node.getAttributeValue("id"), itemNode.getAttributeValue("call-id"));
+            Q_EMIT q_ptr->incomingCall(jid, node.getAttributeValue("t"));
+        }
+        else {
+            sendCallAck(node);
+        }
+    }
+}
+
+QString WAConnectionPrivate::makeId()
+{
+    return QString::number(++iqid, 16);
 }
 
 QString WAConnectionPrivate::messageId()
 {
     QWriteLocker locker(&lockSeq);
-    QString msgId = QString("%1-%2").arg(QDateTime::currentDateTime().toTime_t()).arg(mseq++);
+    QString msgId = QString("%1-%2").arg(sessionTime).arg(QString::number(mseq++, 16));
     return msgId;
 }
 
 void WAConnectionPrivate::sendClientConfig()
 {
-    QString id = makeId("config_");
-
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("type", "set");
     attrs.insert("to", m_domain);
     attrs.insert("xmlns", "urn:xmpp:whatsapp:push");
@@ -696,7 +937,7 @@ void WAConnectionPrivate::sendClientConfig()
 
 void WAConnectionPrivate::sendMessageReceived(const QString &jid, const QString &msdId, const QString &type, const QString &participant)
 {
-    ProtocolTreeNode receipt("receipt");
+    ProtocolTreeNode receiptNode("receipt");
     AttributeList attrs;
     attrs.insert("to", jid);
     attrs.insert("id", msdId);
@@ -707,9 +948,37 @@ void WAConnectionPrivate::sendMessageReceived(const QString &jid, const QString 
     if (!type.isEmpty()) {
         attrs.insert("type", type);
     }
-    receipt.setAttributes(attrs);
+    receiptNode.setAttributes(attrs);
 
-    int bytes = sendRequest(receipt);
+    int bytes = sendRequest(receiptNode);
+}
+
+void WAConnectionPrivate::sendMessageRetry(const QString &jid, const QString &msdId)
+{
+    ProtocolTreeNode receiptNode("receipt");
+    AttributeList attrs;
+    attrs.insert("to", jid);
+    attrs.insert("id", msdId);
+    attrs.insert("t", QString::number(QDateTime::currentMSecsSinceEpoch()));
+    attrs.insert("type", "retry");
+    receiptNode.setAttributes(attrs);
+
+    ProtocolTreeNode registrationNode("registration");
+    quint64 registrationId = axolotlStore->getLocalRegistrationId();
+    //quint64 registrationId = 0;
+    registrationNode.setData(QByteArray::fromHex(QByteArray::number(registrationId, 16)).rightJustified(4, '\0'));
+    receiptNode.addChild(registrationNode);
+
+    ProtocolTreeNode retryNode("retry");
+    attrs.clear();
+    attrs.insert("count", "1");
+    attrs.insert("id", msdId);
+    attrs.insert("t", receiptNode.getAttributeValue("t"));
+    attrs.insert("v", "1");
+    retryNode.setAttributes(attrs);
+    receiptNode.addChild(retryNode);
+
+    int bytes = sendRequest(receiptNode);
 }
 
 void WAConnectionPrivate::sendReceiptAck(const ProtocolTreeNode &node)
@@ -729,10 +998,9 @@ void WAConnectionPrivate::sendReceiptAck(const ProtocolTreeNode &node)
 
 void WAConnectionPrivate::sendCleanDirty(const QStringList &categories)
 {
-    QString id = makeId("clean_dirty_");
     ProtocolTreeNode iqNode("iq");
     AttributeList attrs;
-    attrs.insert("id", id);
+    attrs.insert("id", makeId());
     attrs.insert("type", "set");
     attrs.insert("to", m_domain);
     attrs.insert("xmlns", "urn:xmpp:whatsapp:dirty");
@@ -797,7 +1065,77 @@ void WAConnectionPrivate::sendResult(const QString &id)
     //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
 }
 
-void WAConnectionPrivate::parseMessage(const ProtocolTreeNode &node)
+void WAConnectionPrivate::sendPassive(const QString &mode)
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("type", "set");
+    attrs.insert("xmlns", "passive");
+    attrs.insert("to", m_domain);
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode modeNode(mode);
+    iqNode.addChild(modeNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(passiveResponse));
+    //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
+}
+
+void WAConnectionPrivate::sendCallReceipt(const ProtocolTreeNode &node)
+{
+    ProtocolTreeNode receiptNode("receipt");
+    AttributeList attrs;
+    attrs.insert("to", node.getAttributeValue("from"));
+    attrs.insert("id", node.getAttributeValue("id"));
+    receiptNode.setAttributes(attrs);
+
+    ProtocolTreeNode callNode = node.getChildren().first();
+
+    ProtocolTreeNode actionNode(callNode.getTag());
+    attrs.clear();
+    attrs.insert("call-id", callNode.getAttributeValue("call-id"));
+    actionNode.setAttributes(attrs);
+
+    receiptNode.addChild(actionNode);
+
+    int bytes = sendRequest(receiptNode);
+}
+
+void WAConnectionPrivate::sendCallAck(const ProtocolTreeNode &node)
+{
+    ProtocolTreeNode callNode = node.getChildren().first();
+
+    ProtocolTreeNode ackNode("ack");
+    AttributeList attrs;
+    attrs.insert("to", node.getAttributeValue("from"));
+    attrs.insert("class", "call");
+    attrs.insert("id", node.getAttributeValue("id"));
+    attrs.insert("type", callNode.getTag());
+    ackNode.setAttributes(attrs);
+
+    int bytes = sendRequest(ackNode);
+}
+
+void WAConnectionPrivate::sendCallReject(const QString &jid, const QString &id, const QString &callId)
+{
+    ProtocolTreeNode callNode("call");
+    AttributeList attrs;
+    attrs.insert("to", jid);
+    attrs.insert("id", id);
+    callNode.setAttributes(attrs);
+
+    ProtocolTreeNode rejectNode("reject");
+    attrs.clear();
+    attrs.insert("call-id", callId);
+    rejectNode.setAttributes(attrs);
+
+    callNode.addChild(rejectNode);
+
+    int bytes = sendRequest(callNode);
+}
+
+bool WAConnectionPrivate::parseMessage(const ProtocolTreeNode &node)
 {
     QString jid = node.getAttributeValue("from");
     QString id = node.getAttributeValue("id");
@@ -808,12 +1146,93 @@ void WAConnectionPrivate::parseMessage(const ProtocolTreeNode &node)
             ProtocolTreeNode bodyNode = node.getChild("body");
             Q_EMIT q_ptr->textMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), bodyNode.getDataString());
         }
+        else if (node.getChildren().contains("enc")) {
+            return parseEncryptedMessage(node);
+        }
     }
     else if (type == "media") {
         if (node.getChildren().contains("media")) {
             ProtocolTreeNode mediaNode = node.getChild("media");
             Q_EMIT q_ptr->mediaMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), mediaNode.getAttributes(), mediaNode.getData());
         }
+    }
+    return true;
+}
+
+bool WAConnectionPrivate::parseEncryptedMessage(const ProtocolTreeNode &node)
+{
+    ProtocolTreeNode encNode = node.getChild("enc");
+    if (encNode.getAttributeValue("type") == "pkmsg") {
+        return parsePreKeyWhisperMessage(node);
+    }
+    else {
+        return parseWhisperMessage(node);
+    }
+}
+
+bool WAConnectionPrivate::parsePreKeyWhisperMessage(const ProtocolTreeNode &node)
+{
+    QString jid = node.getAttributeValue("from");
+    QString id = node.getAttributeValue("id");
+    QString timestamp = node.getAttributeValue("t");
+
+    ProtocolTreeNode encNode = node.getChild("enc");
+    try {
+        QSharedPointer<PreKeyWhisperMessage> message(new PreKeyWhisperMessage(encNode.getData()));
+
+        qulonglong recepientId = getRecepient(jid);
+        SessionCipher *cipher = getSessionCipher(recepientId);
+        QString plaintext = cipher->decrypt(message);
+
+        qDebug() << "DECRYPTED:" << plaintext;
+        Q_EMIT q_ptr->textMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), plaintext);
+    }
+    catch (WhisperException &e) {
+        qWarning() << "EXCEPTION" << e.errorType() << e.errorMessage();
+        sendMessageRetry(jid, id);
+        return false;
+    }
+    return true;
+}
+
+bool WAConnectionPrivate::parseWhisperMessage(const ProtocolTreeNode &node)
+{
+    QString jid = node.getAttributeValue("from");
+    QString id = node.getAttributeValue("id");
+    QString timestamp = node.getAttributeValue("t");
+
+    ProtocolTreeNode encNode = node.getChild("enc");
+    try {
+        QSharedPointer<WhisperMessage> message(new WhisperMessage(encNode.getData()));
+
+        qulonglong recepientId = getRecepient(jid);
+        SessionCipher *cipher = getSessionCipher(recepientId);
+        QString plaintext = cipher->decrypt(message);
+
+        qDebug() << "DECRYPTED:" << plaintext;
+        Q_EMIT q_ptr->textMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), plaintext);
+    }
+    catch (WhisperException &e) {
+        qWarning() << "EXCEPTION" << e.errorType() << e.errorMessage();
+        if (e.errorType() == "NoSessionException") {
+            axolotlStore.clear();
+            sendEncrypt();
+        }
+        sendMessageRetry(jid, id);
+        return false;
+    }
+    return true;
+}
+
+SessionCipher *WAConnectionPrivate::getSessionCipher(qulonglong recepient)
+{
+    if (cipherHash.contains(recepient)) {
+        return cipherHash.value(recepient);
+    }
+    else {
+        SessionCipher *cipher = new SessionCipher(axolotlStore, recepient, 1);
+        cipherHash[recepient] = cipher;
+        return cipher;
     }
 }
 
@@ -836,15 +1255,120 @@ ProtocolTreeNode WAConnectionPrivate::getBroadcastNode(const QStringList &jids)
     return broadcastNode;
 }
 
-ProtocolTreeNode WAConnectionPrivate::getMessageNode(const QString &jid, const QString &type)
+ProtocolTreeNode WAConnectionPrivate::getMessageNode(const QString &jid, const QString &type, const QString &msgId)
 {
     ProtocolTreeNode messageNode("message");
     AttributeList attrs;
-    attrs.insert("id", messageId());
+    attrs.insert("id", msgId.isEmpty() ? messageId() : msgId);
     attrs.insert("type", type);
     attrs.insert("to", jid);
     messageNode.setAttributes(attrs);
     return messageNode;
+}
+
+void WAConnectionPrivate::sendEncrypt(bool fresh)
+{
+    qDebug() << "Generating keys...";
+
+    IdentityKeyPair identityKeyPair = fresh ? KeyHelper::generateIdentityKeyPair() : axolotlStore->getIdentityKeyPair();
+    quint64 registrationId          = fresh ? KeyHelper::generateRegistrationId() : axolotlStore->getLocalRegistrationId();
+    QList<PreKeyRecord> preKeys     = KeyHelper::generatePreKeys(KeyHelper::getRandomFFFFFFFF(), 200);
+    SignedPreKeyRecord signedPreKey = KeyHelper::generateSignedPreKey(identityKeyPair, 0);
+
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("xmlns", "encrypt");
+    attrs.insert("to", m_domain);
+    attrs.insert("type", "set");
+    attrs.insert("id", makeId());
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode identityNode("identity");
+    identityNode.setData(identityKeyPair.getPublicKey().serialize().mid(1));
+
+    // STORE
+    if (fresh) {
+        axolotlStore->storeLocalData(registrationId, identityKeyPair);
+    }
+
+    ProtocolTreeNode listNode("list");
+    QListIterator<PreKeyRecord> iter(preKeys);
+    while (iter.hasNext()) {
+        PreKeyRecord preKey = iter.next();
+        ProtocolTreeNode keyNode("key");
+        ProtocolTreeNode idNode("id");
+        QByteArray keyId = QByteArray::number(preKey.getId(), 16);
+        keyId = QByteArray::fromHex(keyId).rightJustified(3, '\0');
+        idNode.setData(keyId);
+        ProtocolTreeNode valueNode("value");
+        valueNode.setData(preKey.getKeyPair().getPublicKey().serialize().mid(1));
+        keyNode.addChild(idNode);
+        keyNode.addChild(valueNode);
+        listNode.addChild(keyNode);
+
+        // STORE
+        axolotlStore->storePreKey(preKey.getId(), preKey);
+    }
+
+    ProtocolTreeNode registrationNode("registration");
+    registrationNode.setData(QByteArray::fromHex(QByteArray::number(registrationId, 16)).rightJustified(4, '\0'));
+
+    ProtocolTreeNode typeNode("type");
+    typeNode.setData(QByteArray(1, '\5'));
+
+    ProtocolTreeNode skeyNode("skey");
+    ProtocolTreeNode idNode("id");
+    QByteArray keyId = QByteArray::number(signedPreKey.getId(), 16);
+    keyId = QByteArray::fromHex(keyId).rightJustified(3, '\0');
+    idNode.setData(keyId);
+    ProtocolTreeNode valueNode("value");
+    valueNode.setData(signedPreKey.getKeyPair().getPublicKey().serialize().mid(1));
+    ProtocolTreeNode signatureNode("signature");
+    signatureNode.setData(signedPreKey.getSignature());
+    skeyNode.addChild(idNode);
+    skeyNode.addChild(valueNode);
+    skeyNode.addChild(signatureNode);
+
+    // STORE
+    axolotlStore->storeSignedPreKey(signedPreKey.getId(), signedPreKey);
+
+    iqNode.addChild(identityNode);
+    iqNode.addChild(listNode);
+    iqNode.addChild(registrationNode);
+    iqNode.addChild(typeNode);
+    iqNode.addChild(skeyNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(encryptionReply));
+}
+
+void WAConnectionPrivate::sendGetEncryptKeys(const QStringList &jids)
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("to", m_domain);
+    attrs.insert("type", "get");
+    attrs.insert("xmlns", "encrypt");
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode keyNode("key");
+
+    foreach (const QString &jid, jids) {
+        ProtocolTreeNode userNode("user");
+        AttributeList userAttrs;
+        userAttrs.insert("jid", jid);
+        userNode.setAttributes(userAttrs);
+        keyNode.addChild(userNode);
+    }
+
+    iqNode.addChild(keyNode);
+
+    int bytes = sendRequest(iqNode, WAREPLY(getKeysReponse));
+}
+
+qulonglong WAConnectionPrivate::getRecepient(const QString &jid)
+{
+    return jid.split("@").first().toULongLong();
 }
 
 bool WAConnectionPrivate::read()
@@ -907,8 +1431,9 @@ bool WAConnectionPrivate::read()
             }
             else if (tag == "message")
             {
-                parseMessage(node);
-                sendMessageReceived(node.getAttributeValue("from"), node.getAttributeValue("id"), QString(), node.getAttributeValue("participant"));
+                if (parseMessage(node)) {
+                    sendMessageReceived(node.getAttributeValue("from"), node.getAttributeValue("id"), QString(), node.getAttributeValue("participant"));
+                }
                 handled = true;
             }
             else if (tag == "iq")
@@ -936,11 +1461,14 @@ bool WAConnectionPrivate::read()
                 else if (type == "status") {
                     parseStatusNotification(node);
                 }
+                else if (type == "encrypt") {
+                    parseEncryptNotification(node);
+                }
                 handled = true;
             }
             else if (tag == "receipt")
             {
-                Q_EMIT q_ptr->messageReceipt(node.getAttributeValue("from"), node.getAttributeValue("id"), node.getAttributeValue("participant"), node.getAttributeValue("t"), node.getAttributeValue("type"));
+                parseReceipt(node);
                 sendReceiptAck(node);
                 handled = true;
             }
@@ -971,6 +1499,10 @@ bool WAConnectionPrivate::read()
             else if (tag == "chatstate")
             {
                 parseChatstate(node);
+                handled = true;
+            }
+            else if (tag == "call") {
+                parseCall(node);
                 handled = true;
             }
         }
@@ -1004,15 +1536,36 @@ void WAConnectionPrivate::socketConnected()
 
 void WAConnectionPrivate::socketDisconnected()
 {
-    qDebug() << "disconnected";
+    qDebug() << "disconnected" << socket->error() << socket->errorString();
     QObject::disconnect(socket, 0, 0, 0);
     out->reset();
     in->reset();
     iqid = 0;
     mseq = 0;
+    cipherHash.clear();
 
-    q_ptr->m_connectionStatus = WAConnection::Disconnected;
-    Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+    if (socket->error() == QTcpSocket::RemoteHostClosedError) {
+        m_nextChallenge.clear();
+        Q_EMIT q_ptr->authFailed();
+
+        int maxRetry = 10;
+        if (retry < maxRetry) {
+            q_ptr->m_connectionStatus = WAConnection::Connecting;
+            Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+
+            retry++;
+            qDebug() << QString("Retry login in %1 seconds... [%2/%3]").arg(retry).arg(retry).arg(maxRetry);
+            QTimer::singleShot(retry * 1000, this, SLOT(loginInternal()));
+        }
+    }
+    else if (m_passiveReconnect) {
+        m_passiveReconnect = false;
+        QTimer::singleShot(1000, this, SLOT(loginInternal()));
+    }
+    else {
+        q_ptr->m_connectionStatus = WAConnection::Disconnected;
+        Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+    }
 }
 
 void WAConnectionPrivate::socketError(QAbstractSocket::SocketError error)
@@ -1084,6 +1637,14 @@ void WAConnectionPrivate::contactsStatuses(const ProtocolTreeNode &node)
             Q_EMIT q_ptr->contactsStatuses(result);
         }
     }
+
+    if (m_passive) {
+        m_passiveCount -= 1;
+        if (m_passiveCount == 0) {
+            m_passiveCount += 1;
+            sendGetGroups("participating");
+        }
+    }
 }
 
 void WAConnectionPrivate::contactPicture(const ProtocolTreeNode &node)
@@ -1102,6 +1663,19 @@ void WAConnectionPrivate::contactPicture(const ProtocolTreeNode &node)
             Q_EMIT q_ptr->contactPictureHidden(jid, error.getAttributeValue("code"));
         }
     }
+
+    if (m_passive) {
+        m_passiveCount -= 1;
+        if (m_passiveCount == 0) {
+            m_passiveCount += 1;
+            if (!m_passiveGroups) {
+                sendGetGroups("participating");
+            }
+            else {
+                sendGetBroadcasts();
+            }
+        }
+    }
 }
 
 void WAConnectionPrivate::contactsPicrureIds(const ProtocolTreeNode &node)
@@ -1110,6 +1684,7 @@ void WAConnectionPrivate::contactsPicrureIds(const ProtocolTreeNode &node)
         QVariantMap contacts;
         ProtocolTreeNode list = node.getChild("list");
         ProtocolTreeNodeListIterator i(list.getChildren());
+        QStringList syncPictures;
         while (i.hasNext())
         {
             ProtocolTreeNode child = i.next().value();
@@ -1118,15 +1693,37 @@ void WAConnectionPrivate::contactsPicrureIds(const ProtocolTreeNode &node)
                 if (child.getAttributes().contains("id")) {
                     //Q_EMIT q_ptr->contactPictureId(jid, child.getAttributeValue("id"), jid);
                     contacts[jid] = child.getAttributeValue("id");
+                    if (m_passive) {
+                        syncPictures.append(jid);
+                    }
                 }
                 else {
-                    sendGetPicture(jid);
+                    syncPictures.append(jid);
                     //contacts[jid] == "hidden";
                 }
             }
         }
-        if (contacts.size() > 0) {
+        if (m_passive) {
+            m_passiveCount += syncPictures.size();
+        }
+        foreach (const QString &jid, syncPictures) {
+            sendGetPicture(jid);
+        }
+        if (!m_passive && contacts.size() > 0) {
             Q_EMIT q_ptr->contactsPictureIds(contacts);
+        }
+    }
+
+    if (m_passive) {
+        m_passiveCount -= 1;
+        if (m_passiveCount == 0) {
+            m_passiveCount += 1;
+            if (!m_passiveGroups) {
+                sendGetGroups("participating");
+            }
+            else {
+                sendGetBroadcasts();
+            }
         }
     }
 }
@@ -1151,9 +1748,18 @@ void WAConnectionPrivate::syncResponse(const ProtocolTreeNode &node)
         }
     }
     if (!synced.isEmpty()) {
-        qDebug() << synced;
+        //qDebug() << synced;
+        if (m_passive) {
+            m_passiveCount = 2;
+            m_passiveGroups = false;
+        }
         Q_EMIT q_ptr->contactsSynced(synced);
     }
+    if (m_passive) {
+        m_passiveCount += 1;
+        m_passiveGroups = false;
+    }
+    sendGetFeatures(synced.keys());
 }
 
 void WAConnectionPrivate::groupsResponse(const ProtocolTreeNode &node)
@@ -1189,8 +1795,195 @@ void WAConnectionPrivate::groupsResponse(const ProtocolTreeNode &node)
         }
         if (groups.size() > 0) {
             Q_EMIT q_ptr->groupsReceived(groups);
+
+            if (m_passive) {
+                m_passiveCount += 1;
+                m_passiveGroups = true;
+            }
+            sendGetPictureIds(groups.keys());
         }
     }
+
+    if (m_passive) {
+        m_passiveCount -= 1;
+        if (m_passiveCount == 0) {
+            sendGetBroadcasts();
+        }
+    }
+}
+
+void WAConnectionPrivate::broadcastsResponse(const ProtocolTreeNode &node)
+{
+    if (node.getChildren().contains("lists")) {
+        QVariantMap broadcasts;
+        ProtocolTreeNode listsNode = node.getChild("lists");
+        ProtocolTreeNodeListIterator i(listsNode.getChildren());
+        while (i.hasNext())
+        {
+            ProtocolTreeNode listNode = i.next().value();
+            QString jid = listNode.getAttributeValue("id");
+            QStringList recepients;
+            ProtocolTreeNodeListIterator j(listNode.getChildren());
+            while (j.hasNext())
+            {
+                ProtocolTreeNode recepientNode = j.next().value();
+                recepients.append(recepientNode.getAttributeValue("jid"));
+            }
+            QVariantMap broadcast;
+            broadcast["jid"] = jid;
+            broadcast["name"] = listNode.getAttributeValue("name");
+            broadcast["recepients"] = recepients;
+            broadcasts[jid] = broadcast;
+        }
+
+        if (broadcasts.size() > 0) {
+            Q_EMIT q_ptr->broadcastsReceived(broadcasts);
+        }
+    }
+
+    if (m_passive) {
+        sendPing();
+        sendPassive("active");
+    }
+}
+
+void WAConnectionPrivate::passiveResponse(const ProtocolTreeNode &node)
+{
+    m_passive = false;
+    m_passiveCount = 0;
+    m_passiveReconnect = true;
+    logout();
+}
+
+void WAConnectionPrivate::encryptionReply(const ProtocolTreeNode &node)
+{
+    if (node.getAttributeValue("type") == "error") {
+        axolotlStore->clear();
+        qWarning() << "Keys are not accepted!";
+        logout();
+    }
+}
+
+void WAConnectionPrivate::onPong(const ProtocolTreeNode &node)
+{
+    Q_UNUSED(node)
+}
+
+void WAConnectionPrivate::getKeysReponse(const ProtocolTreeNode &node)
+{
+    if (node.getChildren().contains("list")) {
+        ProtocolTreeNode listNode = node.getChild("list");
+        ProtocolTreeNodeListIterator i(listNode.getChildren());
+        while (i.hasNext())
+        {
+            ProtocolTreeNode userNode = i.next().value();
+            if (userNode.getTag() == "user") {
+                QString jid = userNode.getAttributeValue("jid");
+                Q_EMIT q_ptr->encryptionStatus(jid, true);
+
+                if (pendingMessages.contains(jid)) {
+                    QString text = pendingMessages.take(jid);
+
+                    bool ok;
+
+                    ProtocolTreeNode identityNode = userNode.getChild("identity");
+                    IdentityKey identityKey(DjbECPublicKey(identityNode.getData()));
+
+                    ProtocolTreeNode keyNode = userNode.getChild("key");
+                    ProtocolTreeNode keyIdNode = keyNode.getChild("id");
+                    qulonglong preKeyId = keyIdNode.getData().toHex().toULongLong(&ok, 16);
+                    ProtocolTreeNode keyValueNode = keyNode.getChild("value");
+                    DjbECPublicKey preKeyPublic(keyValueNode.getData());
+
+                    ProtocolTreeNode registrationNode = userNode.getChild("registration");
+                    qulonglong registrationId = registrationNode.getData().toHex().toULongLong(&ok, 16);
+
+                    ProtocolTreeNode skeyNode = userNode.getChild("skey");
+                    ProtocolTreeNode skeyIdNode = skeyNode.getChild("id");
+                    qulonglong skeyId = skeyIdNode.getData().toHex().toULongLong(&ok, 16);
+                    ProtocolTreeNode skeySignatureNode = skeyNode.getChild("signature");
+                    QByteArray signedSignature = skeySignatureNode.getData();
+                    ProtocolTreeNode skeyValueNode = skeyNode.getChild("value");
+                    DjbECPublicKey signedKey(skeyValueNode.getData());
+
+                    //ProtocolTreeNode typeNode = userNode.getChild("type");
+                    //qulonglong type = typeNode.getData().toHex().toULongLong(&ok, 16);
+
+                    PreKeyBundle bundle(registrationId, 1, preKeyId, preKeyPublic, skeyId, signedKey, signedSignature, identityKey);
+
+                    qulonglong recepientId = getRecepient(jid);
+                    SessionBuilder *sessionBuilder = new SessionBuilder(axolotlStore, recepientId, 1);
+                    try {
+                        sessionBuilder->process(bundle);
+                        sendText(jid, text);
+                    }
+                    catch (WhisperException &e) {
+                        qWarning() << "EXCEPTION" << e.errorType() << e.errorMessage();
+                        if (e.errorType() == "UntrustedIdentityException") {
+                            axolotlStore->removeIdentity(recepientId);
+                            pendingMessages[jid] = text;
+                        }
+                        else {
+                            skipEncodingJids.append(jid);
+                            Q_EMIT q_ptr->encryptionStatus(jid, false);
+                        }
+                        sendText(jid, text);
+                    }
+                }
+            }
+        }
+    }
+
+    if (pendingMessages.count() > 0) {
+        QStringList jids = pendingMessages.keys();
+        foreach (const QString &jid, jids) {
+            skipEncodingJids.append(jid);
+
+            QString text = pendingMessages.take(jid);
+            sendText(jid, text);
+        }
+    }
+}
+
+void WAConnectionPrivate::messageSent(const ProtocolTreeNode &node)
+{
+    Q_EMIT q_ptr->messageSent(node.getAttributeValue("from"), node.getAttributeValue("id"), node.getAttributeValue("t"));
+}
+
+void WAConnectionPrivate::featureResponse(const ProtocolTreeNode &node)
+{
+    if (m_passive) {
+        m_passiveCount -= 1;
+        if (m_passiveCount == 0) {
+            m_passiveCount += 1;
+            sendGetGroups("participating");
+        }
+    }
+}
+
+void WAConnectionPrivate::privacyList(const ProtocolTreeNode &node)
+{
+    if (node.getChildren().contains("query")) {
+        ProtocolTreeNode queryNode = node.getChild("query");
+        if (queryNode.getChildren().contains("list")) {
+            blacklist.clear();
+
+            ProtocolTreeNode listNode = queryNode.getChild("list");
+            ProtocolTreeNodeListIterator i(listNode.getChildren());
+            while (i.hasNext())
+            {
+                ProtocolTreeNode itemNode = i.next().value();
+                blacklist.append(itemNode.getAttributeValue("value"));
+            }
+
+            Q_EMIT q_ptr->blacklistReceived(blacklist);
+        }
+    }
+}
+
+void WAConnectionPrivate::pushConfig(const ProtocolTreeNode &node)
+{
+
 }
 
 WAConnection::WAConnection(QObject *parent) :
@@ -1233,6 +2026,11 @@ void WAConnection::logout()
     d_ptr->logout();
 }
 
+void WAConnection::reconnect()
+{
+    d_ptr->reconnect();
+}
+
 void WAConnection::sendGetProperties()
 {
     d_ptr->sendGetProperties();
@@ -1251,6 +2049,21 @@ void WAConnection::sendAvailable(const QString &pushname)
 void WAConnection::sendUnavailable()
 {
     d_ptr->sendSetPresence(false);
+}
+
+void WAConnection::getEncryptionStatus(const QString &jid)
+{
+    d_ptr->getEncryptionStatus(jid);
+}
+
+void WAConnection::sendTyping(const QString &jid, bool typing)
+{
+    d_ptr->sendTyping(jid, typing);
+}
+
+void WAConnection::sendRetryMessage(const QString &jid, const QString &msgId, const QString &data)
+{
+    d_ptr->sendRetryMessage(jid, msgId, data);
 }
 
 void WAConnection::sendGetGroups(const QString &type)
@@ -1298,9 +2111,9 @@ void WAConnection::sendMessageRead(const QString &jid, const QString &msgId, con
     d_ptr->sendMessageRead(jid, msgId, participant);
 }
 
-void WAConnection::sendNormalText(const QString &jid, const QString &text)
+void WAConnection::sendText(const QString &jid, const QString &text)
 {
-    d_ptr->sendNormalText(jid, text);
+    d_ptr->sendText(jid, text);
 }
 
 void WAConnection::sendBroadcastText(const QString &jid, const QString &text, const QStringList &jids)
