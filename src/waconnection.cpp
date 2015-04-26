@@ -261,6 +261,55 @@ void WAConnectionPrivate::sendGetPrivacyList()
     //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
 }
 
+void WAConnectionPrivate::sendSetPrivacyList(const QStringList &blockedJids, const QStringList &spamJids)
+{
+    ProtocolTreeNode listNode("list");
+    AttributeList attrs;
+    attrs.insert("name", "default");
+    listNode.setAttributes(attrs);
+
+    int order = 1;
+    foreach(QString jid, blockedJids)
+    {
+        ProtocolTreeNode itemNode("item");
+        attrs.clear();
+        attrs.insert("type", "jid");
+        attrs.insert("value", jid);
+        attrs.insert("action", "deny");
+        attrs.insert("order", QString::number(order++));
+        itemNode.setAttributes(attrs);
+        listNode.addChild(itemNode);
+    }
+    foreach(QString jid, spamJids)
+    {
+        ProtocolTreeNode itemNode("item");
+        attrs.clear();
+        attrs.insert("type", "jid");
+        attrs.insert("value", jid);
+        attrs.insert("action", "deny");
+        attrs.insert("order", QString::number(order++));
+        attrs.insert("reason", "spam");
+        itemNode.setAttributes(attrs);
+        listNode.addChild(itemNode);
+    }
+
+    ProtocolTreeNode queryNode("query");
+    attrs.clear();
+    queryNode.setAttributes(attrs);
+    queryNode.addChild(listNode);
+
+    ProtocolTreeNode iqNode("iq");
+    attrs.clear();
+    attrs.insert("id", makeId());
+    attrs.insert("type", "set");
+    attrs.insert("xmlns", "jabber:iq:privacy");
+    iqNode.setAttributes(attrs);
+    iqNode.addChild(queryNode);
+
+    int bytes = sendRequest(iqNode);
+    //counters->increaseCounter(DataCounters::ProtocolBytes, 0, bytes);
+}
+
 void WAConnectionPrivate::sendGetPushConfig()
 {
     ProtocolTreeNode iqNode("iq");
@@ -326,7 +375,7 @@ void WAConnectionPrivate::sendText(const QString &jid, const QString &text, cons
     }
     int bytes = sendRequest(message, WAREPLY(messageSent));
 
-    Q_EMIT q_ptr->textMessageSent(jid, message.getAttributeValue("id"), QString::number(QDateTime::currentDateTime().toTime_t()), text);
+    Q_EMIT q_ptr->textMessageSent(jid, message.getAttributeValue("id"), QString::number(QDateTime::currentDateTime().toTime_t() + serverTimeCorrection), text);
 }
 
 void WAConnectionPrivate::sendBroadcastText(const QString &jid, const QString &text, const QStringList &jids)
@@ -631,12 +680,12 @@ QByteArray WAConnectionPrivate::getAuthBlob(const QByteArray &nonce)
     list.append(m_username.toUtf8());
     list.append(nonce);
 
-    qint64 totalSeconds = QDateTime::currentMSecsSinceEpoch() / 1000;
+    qint64 totalSeconds = QDateTime::currentMSecsSinceEpoch();
     list.append(QString::number(totalSeconds).toUtf8());
-    list.append(m_userAgent);
+    /*list.append(m_userAgent);
     if (!m_mcc.isEmpty() && !m_mnc.isEmpty()) {
         list.append(QString(" MccMnc/%1%2").arg(m_mcc).arg(m_mnc));
-    }
+    }*/
     qDebug() << list.mid(4 + m_username.size() + nonce.size());
 
     outputKey->encodeMessage(list, 0, 4, list.length()-4);
@@ -666,10 +715,13 @@ void WAConnectionPrivate::parseSuccessNode(const ProtocolTreeNode &node)
         return;
     }
 
+    uint now = QDateTime::currentDateTime().toTime_t();
+    serverTimeCorrection = node.getAttributeValue("t").toUInt() - now;
+
     m_nextChallenge = node.getData();
     accountData["nextChallenge"] = QString(m_nextChallenge.toBase64());
 
-    if (!m_passive && m_resource.startsWith("S40") && axolotlStore->countPreKeys() == 0) {
+    if (!m_passive && !m_resource.startsWith("S40") && axolotlStore->countPreKeys() == 0) {
         sendEncrypt();
     }
 
@@ -1215,8 +1267,8 @@ bool WAConnectionPrivate::parseWhisperMessage(const ProtocolTreeNode &node)
     catch (WhisperException &e) {
         qWarning() << "EXCEPTION" << e.errorType() << e.errorMessage();
         if (e.errorType() == "NoSessionException") {
-            axolotlStore.clear();
-            sendEncrypt();
+            //axolotlStore.clear();
+            //sendEncrypt();
         }
         sendMessageRetry(jid, id);
         return false;
@@ -1570,7 +1622,7 @@ void WAConnectionPrivate::socketDisconnected()
 
 void WAConnectionPrivate::socketError(QAbstractSocket::SocketError error)
 {
-    qDebug() << "error:" << error;
+    qDebug() << "error:" << error << "isOpen" << socket->isOpen();
 }
 
 void WAConnectionPrivate::connectionServerProperties(const ProtocolTreeNode &node)
@@ -2046,9 +2098,9 @@ void WAConnection::sendAvailable(const QString &pushname)
     d_ptr->sendSetPresence(true, pushname);
 }
 
-void WAConnection::sendUnavailable()
+void WAConnection::sendUnavailable(const QString &pushname)
 {
-    d_ptr->sendSetPresence(false);
+    d_ptr->sendSetPresence(false, pushname);
 }
 
 void WAConnection::getEncryptionStatus(const QString &jid)

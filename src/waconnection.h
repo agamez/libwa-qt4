@@ -49,7 +49,7 @@ public slots:
     void sendSubscribe(const QString &jid);
     void sendUnsubscribe(const QString &jid);
     void sendAvailable(const QString &pushname);
-    void sendUnavailable();
+    void sendUnavailable(const QString &pushname = QString());
     void sendGetGroups(const QString &type);
     void sendRetryMessage(const QString &jid, const QString &msgId, const QString &data);
     void sendTyping(const QString &jid, bool typing);

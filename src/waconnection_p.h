@@ -40,6 +40,7 @@ public:
     void sendGetPictureIds(const QStringList &jids);
     void sendPresenceRequest(const QString &jid, const QString &type);
     void sendGetPrivacyList();
+    void sendSetPrivacyList(const QStringList &blockedJids, const QStringList &spamJids = QStringList());
     void sendGetPushConfig();
 
     void sendSetPresence(bool available, const QString &pushname = QString());
@@ -152,6 +153,8 @@ private:
     uint mseq;
     uint sessionTime;
     int retry;
+
+    int serverTimeCorrection;
 
     QHash<qulonglong, SessionCipher*> cipherHash;
     QHash<QString, QString> pendingMessages;
