@@ -2,7 +2,7 @@ TEMPLATE = lib
 
 TARGET = wa-qt5
 isEmpty(CURRENT_RPATH_DIR) {
-    taget.path = /usr/lib
+    target.path = /usr/lib
 } else {
     message("$$TARGET QMAKE_RPATHDIR and PATH is set to $$CURRENT_RPATH_DIR")
     target.path = $$CURRENT_RPATH_DIR
