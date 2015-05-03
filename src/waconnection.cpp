@@ -53,6 +53,10 @@ void WAConnectionPrivate::readNode()
 
 void WAConnectionPrivate::login(const QVariantMap &loginData)
 {
+    if (q_ptr->m_connectionStatus > WAConnection::Disconnected) {
+        return;
+    }
+
     m_domain = QString(JID_DOMAIN);
     m_username = loginData["login"].toString();
     m_jid = QString("%1%2").arg(m_username).arg(m_domain);
@@ -70,6 +74,9 @@ void WAConnectionPrivate::login(const QVariantMap &loginData)
     axolotlStore->setDatabaseName(database);
     m_servers = loginData["servers"].toStringList();
     m_passive = loginData["passive"].toBool();
+    if (m_passive) {
+        qDebug() << "PASSIVE LOGIN!";
+    }
 
     loginInternal();
 }
@@ -733,7 +740,6 @@ void WAConnectionPrivate::parseSuccessNode(const ProtocolTreeNode &node)
     sendGetPushConfig();
 
     if (m_passive) {
-
         q_ptr->m_connectionStatus = WAConnection::Initiaization;
         Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
     }
@@ -993,7 +999,7 @@ void WAConnectionPrivate::sendMessageReceived(const QString &jid, const QString 
     AttributeList attrs;
     attrs.insert("to", jid);
     attrs.insert("id", msdId);
-    attrs.insert("t", QString::number(QDateTime::currentMSecsSinceEpoch()));
+    //attrs.insert("t", QString::number(QDateTime::currentMSecsSinceEpoch()));
     if (!participant.isEmpty()) {
         attrs.insert("participant", participant);
     }
@@ -1035,13 +1041,13 @@ void WAConnectionPrivate::sendMessageRetry(const QString &jid, const QString &ms
 
 void WAConnectionPrivate::sendReceiptAck(const ProtocolTreeNode &node)
 {
-    QString id = node.getAttributeValue("id");
     QString type = node.getAttributeValue("type");
 
     AttributeList attrs;
-    attrs.insert("class","receipt");
+    attrs.insert("class", "receipt");
     attrs.insert("type", type.isEmpty() ? "delivery" : type);
-    attrs.insert("id", id);
+    attrs.insert("id", node.getAttributeValue("id"));
+    attrs.insert("to", node.getAttributeValue("from"));
     ProtocolTreeNode ackNode("ack", attrs);
 
     int bytes = sendRequest(ackNode);
@@ -1608,6 +1614,10 @@ void WAConnectionPrivate::socketDisconnected()
             retry++;
             qDebug() << QString("Retry login in %1 seconds... [%2/%3]").arg(retry).arg(retry).arg(maxRetry);
             QTimer::singleShot(retry * 1000, this, SLOT(loginInternal()));
+        }
+        else {
+            q_ptr->m_connectionStatus = WAConnection::Disconnected;
+            Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
         }
     }
     else if (m_passiveReconnect) {
