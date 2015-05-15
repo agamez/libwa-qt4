@@ -6,8 +6,7 @@
 LitePreKeyStore::LitePreKeyStore(const QSqlDatabase &db)
 {
     _db = db;
-    _db.exec("CREATE TABLE IF NOT EXISTS prekeys (_id INTEGER PRIMARY KEY AUTOINCREMENT,\
-             prekey_id INTEGER UNIQUE, sent_to_server BOOLEAN, record BLOB);");
+    _db.exec("CREATE TABLE IF NOT EXISTS prekeys (_id INTEGER PRIMARY KEY AUTOINCREMENT, prekey_id INTEGER UNIQUE, sent_to_server BOOLEAN, record BLOB);");
 }
 
 void LitePreKeyStore::clear()

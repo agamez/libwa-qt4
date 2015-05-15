@@ -144,6 +144,7 @@ private:
     QHash<QString, const char*> m_bindStore;
 
     QTcpSocket *socket;
+    QAbstractSocket::SocketError socketLastError;
     WATokenDictionary *dict;
     BinTreeNodeWriter *out;
     BinTreeNodeReader *in;

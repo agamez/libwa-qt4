@@ -6,8 +6,7 @@
 LiteSessionStore::LiteSessionStore(const QSqlDatabase &db)
 {
     _db = db;
-    _db.exec("CREATE TABLE IF NOT EXISTS sessions (_id INTEGER PRIMARY KEY AUTOINCREMENT,\
-             recipient_id INTEGER UNIQUE, device_id INTEGER, record BLOB, timestamp INTEGER);");
+    _db.exec("CREATE TABLE IF NOT EXISTS sessions (_id INTEGER PRIMARY KEY AUTOINCREMENT, recipient_id INTEGER UNIQUE, device_id INTEGER, record BLOB, timestamp INTEGER);");
 }
 
 void LiteSessionStore::clear()
@@ -23,10 +22,12 @@ SessionRecord *LiteSessionStore::loadSession(qulonglong recipientId, int deviceI
     q.bindValue(":device_id", deviceId);
     q.exec();
     if (q.next()) {
+        qDebug() << "Loaded session" << recipientId << deviceId;
         QByteArray serialized = q.value(0).toByteArray();
         return new SessionRecord(serialized);
     }
     else {
+        qDebug() << "New session session" << recipientId << deviceId;
         return new SessionRecord();
     }
 }

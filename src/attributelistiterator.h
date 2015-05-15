@@ -33,7 +33,7 @@
 
 #include "attributelist.h"
 
-class AttributeListIterator : public QMapIterator<QString,QString>
+class AttributeListIterator : public QMapIterator<QString,QVariant>
 {
 
 public:

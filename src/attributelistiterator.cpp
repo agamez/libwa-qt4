@@ -29,6 +29,6 @@
 #include "attributelistiterator.h"
 
 AttributeListIterator::AttributeListIterator(const AttributeList &list) :
-    QMapIterator<QString,QString>(list)
+    QMapIterator<QString,QVariant>(list)
 {
 }

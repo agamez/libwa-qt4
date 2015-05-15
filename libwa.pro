@@ -48,7 +48,8 @@ HEADERS += \
     src/axolotl/litesessionstore.h \
     src/axolotl/liteprekeystore.h \
     src/axolotl/liteidentitykeystore.h \
-    src/axolotl/liteaxolotlstore.h
+    src/axolotl/liteaxolotlstore.h \
+    src/mediadownloader.h
 
 SOURCES += \
     src/waregistration.cpp \
@@ -72,7 +73,8 @@ SOURCES += \
     src/axolotl/litesessionstore.cpp \
     src/axolotl/liteprekeystore.cpp \
     src/axolotl/liteidentitykeystore.cpp \
-    src/axolotl/liteaxolotlstore.cpp
+    src/axolotl/liteaxolotlstore.cpp \
+    src/mediadownloader.cpp
 
 lessThan(QT_MAJOR_VERSION, 5) {
 HEADERS += \

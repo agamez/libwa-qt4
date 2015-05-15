@@ -7,5 +7,6 @@
 #include "waconnection.h"
 #include "protocoltreenode.h"
 #include "attributelist.h"
+#include "mediadownloader.h"
 
 #endif // LIBWA_IMPORT_H

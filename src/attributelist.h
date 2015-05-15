@@ -29,10 +29,9 @@
 #ifndef ATTRIBUTELIST_H
 #define ATTRIBUTELIST_H
 
-#include <QString>
-#include <QMap>
+#include <QVariantMap>
 
-class AttributeList : public QMap<QString,QString>
+class AttributeList : public QVariantMap
 {
 
 public:

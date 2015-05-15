@@ -262,7 +262,7 @@ void BinTreeNodeWriter::writeAttributes(const AttributeList& attributes, QDataSt
     {
         i.next();
         writeString(i.key(), out);
-        writeString(i.value(), out);
+        writeString(i.value().toString(), out);
     }
 }
 

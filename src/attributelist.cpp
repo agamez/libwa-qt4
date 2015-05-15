@@ -32,7 +32,7 @@
 #include "attributelistiterator.h"
 
 AttributeList::AttributeList() :
-    QMap<QString,QString>()
+    QVariantMap()
 {
 }
 
@@ -45,7 +45,7 @@ QString AttributeList::toString() const
     while (i.hasNext())
     {
         i.next();
-        out << " " << i.key() << "=\"" << i.value() + "\"";
+        out << " " << i.key() << "=\"" << i.value().toString() + "\"";
     }
 
     return result;

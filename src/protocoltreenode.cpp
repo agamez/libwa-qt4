@@ -131,7 +131,7 @@ const AttributeList& ProtocolTreeNode::getAttributes() const
 
 QString ProtocolTreeNode::getAttributeValue(const QString &key) const
 {
-    return attributes.value(key);
+    return attributes.value(key).toString();
 }
 
 const ProtocolTreeNodeList &ProtocolTreeNode::getChildren() const

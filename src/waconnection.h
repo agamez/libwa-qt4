@@ -51,6 +51,7 @@ public slots:
     void sendAvailable(const QString &pushname);
     void sendUnavailable(const QString &pushname = QString());
     void sendGetGroups(const QString &type);
+    void sendGetBroadcasts();
     void sendRetryMessage(const QString &jid, const QString &msgId, const QString &data);
     void sendTyping(const QString &jid, bool typing);
 

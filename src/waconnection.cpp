@@ -30,6 +30,7 @@ WAConnectionPrivate::WAConnectionPrivate(WAConnection *q):
 void WAConnectionPrivate::init()
 {
     socket = new QTcpSocket(this);
+    socketLastError = QAbstractSocket::UnknownSocketError;
     dict = new WATokenDictionary(this);
     out = new BinTreeNodeWriter(socket, dict, this);
     in = new BinTreeNodeReader(socket, dict, this);
@@ -591,6 +592,7 @@ int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node)
     if (socket->isOpen()) {
         return out->write(node, false);
     }
+    return 0;
 }
 
 int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node, const char *member)
@@ -599,6 +601,7 @@ int WAConnectionPrivate::sendRequest(const ProtocolTreeNode &node, const char *m
         m_bindStore[node.getAttributeValue("id")] = member;
         return sendRequest(node);
     }
+    return 0;
 }
 
 void WAConnectionPrivate::tryLogin()
@@ -1022,8 +1025,8 @@ void WAConnectionPrivate::sendMessageRetry(const QString &jid, const QString &ms
     receiptNode.setAttributes(attrs);
 
     ProtocolTreeNode registrationNode("registration");
-    quint64 registrationId = axolotlStore->getLocalRegistrationId();
-    //quint64 registrationId = 0;
+    //quint64 registrationId = axolotlStore->getLocalRegistrationId();
+    quint64 registrationId = 0;
     registrationNode.setData(QByteArray::fromHex(QByteArray::number(registrationId, 16)).rightJustified(4, '\0'));
     receiptNode.addChild(registrationNode);
 
@@ -1211,7 +1214,17 @@ bool WAConnectionPrivate::parseMessage(const ProtocolTreeNode &node)
     else if (type == "media") {
         if (node.getChildren().contains("media")) {
             ProtocolTreeNode mediaNode = node.getChild("media");
-            Q_EMIT q_ptr->mediaMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), mediaNode.getAttributes(), mediaNode.getData());
+            AttributeList attrs = mediaNode.getAttributes();
+            QByteArray data;
+            if (mediaNode.getAttributeValue("type") == "vcard") {
+                ProtocolTreeNode vcardNode = mediaNode.getChild("vcard");
+                attrs["name"] = vcardNode.getAttributeValue("name");
+                data = vcardNode.getData();
+            }
+            else {
+                data = mediaNode.getData();
+            }
+            Q_EMIT q_ptr->mediaMessageReceived(jid, id, timestamp, node.getAttributeValue("participant"), node.getAttributes().contains("offline"), attrs, data);
         }
     }
     return true;
@@ -1583,6 +1596,8 @@ bool WAConnectionPrivate::read()
 
 void WAConnectionPrivate::socketConnected()
 {
+    socketLastError = QAbstractSocket::UnknownSocketError;
+
     qDebug() << "connected";
     socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
 
@@ -1594,7 +1609,7 @@ void WAConnectionPrivate::socketConnected()
 
 void WAConnectionPrivate::socketDisconnected()
 {
-    qDebug() << "disconnected" << socket->error() << socket->errorString();
+    qDebug() << "disconnected" << socketLastError;
     QObject::disconnect(socket, 0, 0, 0);
     out->reset();
     in->reset();
@@ -1602,7 +1617,7 @@ void WAConnectionPrivate::socketDisconnected()
     mseq = 0;
     cipherHash.clear();
 
-    if (socket->error() == QTcpSocket::RemoteHostClosedError) {
+    if (socketLastError == QTcpSocket::RemoteHostClosedError) {
         m_nextChallenge.clear();
         Q_EMIT q_ptr->authFailed();
 
@@ -1633,6 +1648,7 @@ void WAConnectionPrivate::socketDisconnected()
 void WAConnectionPrivate::socketError(QAbstractSocket::SocketError error)
 {
     qDebug() << "error:" << error << "isOpen" << socket->isOpen();
+    socketLastError = error;
 }
 
 void WAConnectionPrivate::connectionServerProperties(const ProtocolTreeNode &node)
@@ -2131,6 +2147,11 @@ void WAConnection::sendRetryMessage(const QString &jid, const QString &msgId, co
 void WAConnection::sendGetGroups(const QString &type)
 {
     d_ptr->sendGetGroups(type);
+}
+
+void WAConnection::sendGetBroadcasts()
+{
+    d_ptr->sendGetBroadcasts();
 }
 
 void WAConnection::sendSubscribe(const QString &jid)

@@ -7,10 +7,7 @@
 LiteIdentityKeyStore::LiteIdentityKeyStore(const QSqlDatabase &db)
 {
     _db = db;
-    _db.exec("CREATE TABLE IF NOT EXISTS identities (_id INTEGER PRIMARY KEY AUTOINCREMENT,\
-              recipient_id INTEGER UNIQUE,\
-              registration_id INTEGER, public_key BLOB, private_key BLOB,\
-             next_prekey_id INTEGER, timestamp INTEGER);");
+    _db.exec("CREATE TABLE IF NOT EXISTS identities (_id INTEGER PRIMARY KEY AUTOINCREMENT, recipient_id INTEGER UNIQUE, registration_id INTEGER, public_key BLOB, private_key BLOB, next_prekey_id INTEGER, timestamp INTEGER);");
 }
 
 void LiteIdentityKeyStore::clear()
