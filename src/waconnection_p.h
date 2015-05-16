@@ -57,6 +57,8 @@ public:
     void sendGetGroups(const QString &type);
     void sendGetBroadcasts();
 
+    void sendSetStatusMessage(const QString &message);
+
     void sendTyping(const QString &jid, bool typing);
 
     void getEncryptionStatus(const QString &jid);

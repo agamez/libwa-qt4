@@ -54,6 +54,7 @@ public slots:
     void sendGetBroadcasts();
     void sendRetryMessage(const QString &jid, const QString &msgId, const QString &data);
     void sendTyping(const QString &jid, bool typing);
+    void sendSetStatusMessage(const QString &message);
 
     void getEncryptionStatus(const QString &jid);
 

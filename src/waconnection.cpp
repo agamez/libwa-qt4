@@ -564,6 +564,24 @@ void WAConnectionPrivate::sendGetBroadcasts()
     int bytes = sendRequest(iqNode, WAREPLY(broadcastsResponse));
 }
 
+void WAConnectionPrivate::sendSetStatusMessage(const QString &message)
+{
+    ProtocolTreeNode iqNode("iq");
+    AttributeList attrs;
+    attrs.insert("id", makeId());
+    attrs.insert("xmlns", "status");
+    attrs.insert("type", "set");
+    attrs.insert("to", m_domain);
+    iqNode.setAttributes(attrs);
+
+    ProtocolTreeNode statusNode("status");
+    statusNode.setData(message.toUtf8());
+
+    iqNode.addChild(statusNode);
+
+    int bytes = sendRequest(iqNode);
+}
+
 void WAConnectionPrivate::sendTyping(const QString &jid, bool typing)
 {
     ProtocolTreeNode messageNode("chatstate");
@@ -2137,6 +2155,11 @@ void WAConnection::getEncryptionStatus(const QString &jid)
 void WAConnection::sendTyping(const QString &jid, bool typing)
 {
     d_ptr->sendTyping(jid, typing);
+}
+
+void WAConnection::sendSetStatusMessage(const QString &message)
+{
+    d_ptr->sendSetStatusMessage(message);
 }
 
 void WAConnection::sendRetryMessage(const QString &jid, const QString &msgId, const QString &data)
