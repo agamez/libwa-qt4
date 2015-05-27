@@ -140,6 +140,7 @@ private:
     bool read();
 
     bool m_isReading;
+    bool m_authFailed;
 
     QReadWriteLock lockSeq;
 

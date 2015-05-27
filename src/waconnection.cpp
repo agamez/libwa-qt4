@@ -23,7 +23,8 @@ WAConnectionPrivate::WAConnectionPrivate(WAConnection *q):
     m_passive(false),
     m_passiveCount(0),
     m_passiveGroups(false),
-    m_passiveReconnect(false)
+    m_passiveReconnect(false),
+    m_authFailed(false)
 {
 }
 
@@ -1518,6 +1519,12 @@ bool WAConnectionPrivate::read()
                 parseSuccessNode(node);
                 handled = true;
             }
+            else if (tag == "failure")
+            {
+                Q_EMIT q_ptr->authFailed();
+                m_authFailed = true;
+                handled = true;
+            }
             else if (tag == "message")
             {
                 if (parseMessage(node)) {
@@ -1637,10 +1644,8 @@ void WAConnectionPrivate::socketDisconnected()
 
     if (socketLastError == QTcpSocket::RemoteHostClosedError) {
         m_nextChallenge.clear();
-        Q_EMIT q_ptr->authFailed();
-
         int maxRetry = 10;
-        if (retry < maxRetry) {
+        if (!m_authFailed && retry < maxRetry) {
             q_ptr->m_connectionStatus = WAConnection::Connecting;
             Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
 
@@ -1667,6 +1672,11 @@ void WAConnectionPrivate::socketError(QAbstractSocket::SocketError error)
 {
     qDebug() << "error:" << error << "isOpen" << socket->isOpen();
     socketLastError = error;
+
+    if (error == QTcpSocket::NetworkError) {
+        q_ptr->m_connectionStatus = WAConnection::Disconnected;
+        Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
+    }
 }
 
 void WAConnectionPrivate::connectionServerProperties(const ProtocolTreeNode &node)
