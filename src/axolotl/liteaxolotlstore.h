@@ -1,4 +1,4 @@
-﻿#ifndef LITEAXOLOTLSTORE_H
+#ifndef LITEAXOLOTLSTORE_H
 #define LITEAXOLOTLSTORE_H
 
 #include "../libaxolotl/state/axolotlstore.h"

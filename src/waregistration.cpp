@@ -1,4 +1,4 @@
-﻿#include "waregistration.h"
+#include "waregistration.h"
 #include "warequest.h"
 #include "waconstants.h"
 
