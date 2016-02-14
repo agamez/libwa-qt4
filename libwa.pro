@@ -1,6 +1,6 @@
 TEMPLATE = lib
 
-TARGET = wa-qt5
+TARGET = wa-qt4
 isEmpty(CURRENT_RPATH_DIR) {
     target.path = /usr/lib
 } else {
@@ -17,8 +17,8 @@ INSTALLS += target
 
 DEFINES += LIBWA_LIBRARY
 
-LIBS += -L../libaxolotl -laxolotl
-LIBS += -L../libcurve25519 -lcurve25519
+LIBS += -laxolotl
+LIBS += -lcurve25519
 
 HEADERS += \
     src/waregistration.h \
