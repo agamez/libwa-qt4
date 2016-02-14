@@ -29,7 +29,7 @@ QVariant Json::parse(const QByteArray &serialized)
     }
 #else
     bool no_error = true;
-    QVariant doc = QtJson::parse(json, no_error);
+    QVariant doc = QtJson::parse(serialized, no_error);
     if (no_error) {
         return doc;
     }
