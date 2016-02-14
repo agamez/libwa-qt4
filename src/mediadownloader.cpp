@@ -94,7 +94,9 @@ void MediaDownloader::onReadyRead()
 
 void MediaDownloader::onSslErrors(const QList<QSslError> &errors)
 {
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     qDebug() << errors;
+#endif
 
     _file->flush();
     _file->close();
