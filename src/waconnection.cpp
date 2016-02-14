@@ -370,7 +370,7 @@ void WAConnectionPrivate::sendText(const QString &jid, const QString &text, cons
 
             ProtocolTreeNode encNode("enc");
             AttributeList attrs;
-            attrs.insert("type", ciphertext->getType() == CiphertextMessage::WHISPER_TYPE ? "msg" : "pkmsg");
+            attrs.insert("type", ciphertext->getType() == WHISPER_TYPE ? "msg" : "pkmsg");
             attrs.insert("av", m_encryptionav);
             attrs.insert("v", "1");
             encNode.setAttributes(attrs);
