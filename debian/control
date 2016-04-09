@@ -1,0 +1,15 @@
+Source: libwa-qt4
+Priority: extra
+Section: libs
+Maintainer: Alvaro G. M. <alvaro.gamez@hazent.com>
+Build-Depends: libaxolotl-dev
+
+Package: libwa-qt4
+Architecture: any
+Description: libwa-qt4 is a implementation of Whatsapp protocol with qt bindings
+  libwa-qt4 is a implementation of Whatsapp protocol with qt bindings
+
+Package: libwa-qt4-dev
+Architecture: any
+Description: libwa-qt4 development files
+  libwa-qt4 is a implementation of Whatsapp protocol with qt bindings
