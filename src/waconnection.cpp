@@ -1165,6 +1165,7 @@ void WAConnectionPrivate::sendPassive(const QString &mode)
 
 void WAConnectionPrivate::sendCallReceipt(const ProtocolTreeNode &node)
 {
+/*
     ProtocolTreeNode receiptNode("receipt");
     AttributeList attrs;
     attrs.insert("to", node.getAttributeValue("from"));
@@ -1181,10 +1182,12 @@ void WAConnectionPrivate::sendCallReceipt(const ProtocolTreeNode &node)
     receiptNode.addChild(actionNode);
 
     int bytes = sendRequest(receiptNode);
+*/
 }
 
 void WAConnectionPrivate::sendCallAck(const ProtocolTreeNode &node)
 {
+/*
     ProtocolTreeNode callNode = node.getChildren().first();
 
     ProtocolTreeNode ackNode("ack");
@@ -1196,6 +1199,7 @@ void WAConnectionPrivate::sendCallAck(const ProtocolTreeNode &node)
     ackNode.setAttributes(attrs);
 
     int bytes = sendRequest(ackNode);
+*/
 }
 
 void WAConnectionPrivate::sendCallReject(const QString &jid, const QString &id, const QString &callId)
