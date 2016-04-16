@@ -658,7 +658,7 @@ void WAConnectionPrivate::loginInternal()
 int WAConnectionPrivate::sendFeatures()
 {
     ProtocolTreeNode node("stream:features");
-
+/*
     ProtocolTreeNode child1("readreceipts");
     node.addChild(child1);
 
@@ -670,7 +670,7 @@ int WAConnectionPrivate::sendFeatures()
 
     ProtocolTreeNode child4("presence");
     node.addChild(child4);
-
+*/
     return sendRequest(node);
 }
 
@@ -712,6 +712,7 @@ QByteArray WAConnectionPrivate::getAuthBlob(const QByteArray &nonce)
 
     qint64 totalSeconds = QDateTime::currentMSecsSinceEpoch();
     list.append(QString::number(totalSeconds).toUtf8());
+
     /*list.append(m_userAgent);
     if (!m_mcc.isEmpty() && !m_mnc.isEmpty()) {
         list.append(QString(" MccMnc/%1%2").arg(m_mcc).arg(m_mnc));
