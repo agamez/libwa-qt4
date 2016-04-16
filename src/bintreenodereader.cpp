@@ -224,14 +224,14 @@ bool BinTreeNodeReader::readListSize(qint32 token, int& size)
     size = -1;
     if (token == 0) {
         size = 0;
-    } else if (token == 0xf8) {
+    } else if (token == 248) {
         quint8 b;
         if (!readInt8(b)) {
             qDebug() << "failed to read 8bit size";
             return false;
         }
         size = b;
-    } else if (token == 0xf9) {
+    } else if (token == 249) {
         qint16 b; //TODO: changed from quint16 to qint16. check if valid
         if (!readInt16(b)) {
             qDebug() << "failed to read 16bit size";
@@ -239,7 +239,7 @@ bool BinTreeNodeReader::readListSize(qint32 token, int& size)
         }
         size = b;
     } else {
-        qDebug() << "Invalid list size in readListSize: token 0x" << QString::number(token, 16);
+        qDebug() << "Invalid list size in readListSize: token" << QString::number(token);
         harakiri();
         return false;
     }
@@ -317,7 +317,7 @@ bool BinTreeNodeReader::readString(int token, QByteArray& s)
         harakiri();
     }
 
-    if (token > 0 && token < 0xf5)
+    if (token > 2 && token < dict->dictSize(0))
         return getToken(token, s);
 
     //no default value.
@@ -326,25 +326,25 @@ bool BinTreeNodeReader::readString(int token, QByteArray& s)
         case 0:
             return false;
 
-        case 0xfc: {
+        case 252: {
             quint8 size8;
             if (!readInt8(size8))
                 return false;
             return fillArray(s, size8);
         }
-        case 0xfd: {
+        case 253: {
             qint32 size24;
             if (!readInt24(size24))
                 return false;
             return fillArray(s, size24);
         }
-        case 0xfe: {
+        case 254: {
             quint8 token8;
             if (!readInt8(token8))
                 return false;
-            return getToken(0xf5 + token8, s);
+            return getToken(dict->dictSize(0) + token8, s);
         }
-        case 0xfa: {
+        case 250: {
             QByteArray user,server;
             bool usr = readString(user);
             bool srv = readString(server);
@@ -362,7 +362,8 @@ bool BinTreeNodeReader::readString(int token, QByteArray& s)
             harakiri();
             return false;
         }
-        case 0xff: {
+        case 251:
+        case 255: {
             quint8 nbyte;
             if (!readInt8(nbyte))
                 return false;
@@ -385,7 +386,7 @@ bool BinTreeNodeReader::readString(int token, QByteArray& s)
 
 bool BinTreeNodeReader::getToken(int token, QByteArray &s)
 {
-    bool subdict = false;
+    int subdict = 0;
     QString string;
     dict->getToken(string, subdict, token);
     if (string.isEmpty()) {
