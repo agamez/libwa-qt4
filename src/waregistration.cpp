@@ -7,6 +7,9 @@
 
 #include <QLocale>
 
+#include <QDebug>
+
+
 WARegistration::WARegistration(QObject *parent) :
     QObject(parent)
 {
@@ -47,8 +50,10 @@ void WARegistration::checkExists()
 
 void WARegistration::codeRequest()
 {
+    qDebug() << "codeRequest()";
     QString url = QString("%1%2").arg(REGISTRATION_URL).arg(REGISTRATION_CODE);
     WARequest *request = new WARequest(url, m_ua, this);
+    qDebug() << "Got a new request:" << url << m_ua;
 
     request->addParam("cc", m_cc);
     request->addParam("in", m_phone);
@@ -59,6 +64,8 @@ void WARegistration::codeRequest()
     request->addParam("lc", m_lc.isEmpty() ? "ZZ" : m_lc);
     request->addParam("token", m_token);
     request->addParam("id", m_id);
+
+    qDebug() << "Added all parameters";
 
     QObject::connect(request, SIGNAL(finished(QVariantMap)), this, SIGNAL(finished(QVariantMap)));
     QObject::connect(request,SIGNAL(sslError()), this, SLOT(sslError()));
