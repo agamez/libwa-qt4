@@ -64,7 +64,7 @@ int BinTreeNodeWriter::streamStart(const QString& domain, const QString& resourc
     writeInt8(0x57, out);
     writeInt8(0x41, out);
     writeInt8(1, out);
-    writeInt8(5, out);
+    writeInt8(6, out);
 
     AttributeList streamOpenAttributes;
     streamOpenAttributes.insert("resource", resource);
