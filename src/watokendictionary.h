@@ -9,13 +9,15 @@ class WATokenDictionary : public QObject
 public:
     WATokenDictionary(QObject * parent = 0);
 
-    bool tryGetToken(const QString &string, int &subdict, int &token);
-    void getToken(QString &string, int &subdict, int token);
+    bool tryGetToken(const QString &string, bool &subdict, int &token);
+    void getToken(QString &string, bool &subdict, int token);
 
-    int dictSize(int) const;
+    int primarySize() const;
+    int secondarySize() const;
 
 private:
-    QStringList dictStrings[3];
+    QStringList primaryStrings;
+    QStringList secondaryStrings;
 };
 
 #endif // WATOKENDICTIONARY_H

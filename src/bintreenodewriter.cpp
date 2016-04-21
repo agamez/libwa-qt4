@@ -63,8 +63,8 @@ int BinTreeNodeWriter::streamStart(const QString& domain, const QString& resourc
 
     writeInt8(0x57, out);
     writeInt8(0x41, out);
-    writeInt8(2, out);
-    writeInt8(0, out);
+    writeInt8(1, out);
+    writeInt8(6, out);
 
     AttributeList streamOpenAttributes;
     streamOpenAttributes.insert("resource", resource);
@@ -275,13 +275,10 @@ void BinTreeNodeWriter::writeString(const QString &tag, QDataStream& out)
     }
     else {
         int token;
-        int subdict;
+        bool subdict;
         if (dict->tryGetToken(tag, subdict, token)) {
-            unsigned int offset=0;
-            for(unsigned int t=0; t<subdict; t++)
-                offset += dict->dictSize(t);
-            if (offset)
-                writeToken(offset, out);
+            if (subdict)
+                writeToken(dict->primarySize(), out);
             writeToken(token, out);
         }
         else if (tag.split("@").count() == 2) {
