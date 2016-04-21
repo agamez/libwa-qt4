@@ -87,7 +87,7 @@ QList<QByteArray> KeyStream::keyFromPasswordAndNonce(const QByteArray& pass, con
     for (int i = 1; i < 5; i++) {
         QByteArray nnonce = nonce;
         nnonce.append(i);
-        keys.append(bytes.deriveBytes(pass, nnonce, 2));
+        keys.append(bytes.deriveBytes(pass, nnonce, 20));
     }
 
     return keys;
