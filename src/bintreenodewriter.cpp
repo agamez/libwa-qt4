@@ -152,7 +152,7 @@ void BinTreeNodeWriter::flushBuffer(bool flushNetwork)
     processBuffer();
 
     // Write buffer
-    //qDebug() << ">> " + QString(writeBuffer.toHex());
+    qDebug() << "<< HEX BUFFER >> " + QString(writeBuffer.toHex());
     if ((socket->write(writeBuffer)) == -1) {
         qDebug() << "error writing buffer";
         harakiri();

@@ -728,6 +728,10 @@ int WAConnectionPrivate::sendResponse(const QByteArray &challengeData)
     QByteArray authBlob = getAuthBlob(challengeData);
 
     ProtocolTreeNode node("response", authBlob);
+    AttributeList attrs;
+    attrs.insert("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl");
+    node.setAttributes(attrs);
+
     int bytes = sendRequest(node);
     out->setCrypto(true);
 
