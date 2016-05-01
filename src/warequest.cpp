@@ -20,7 +20,7 @@ void WARequest::addParam(QString name, QString value)
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
     m_url_query.addQueryItem(name, QUrl::toPercentEncoding(value));
 #else
-    m_url.addQueryItem(name,  QUrl::toPercentEncoding(value));
+    m_url.addEncodedQueryItem(name.toLatin1(), value.replace("+", "%2B").replace("/", "%2F").replace("=", "%3D").toLatin1());
 #endif
 }
 
@@ -32,11 +32,12 @@ void WARequest::sendRequest()
 #endif
         QNetworkRequest request(m_url);
         request.setRawHeader("User-Agent", m_ua.toLatin1());
-        request.setRawHeader("Connection", "closed");
+        request.setRawHeader("Connection", "close");
+        qDebug() << "WARequest:" << request.url().toString();
+        qDebug() << request.rawHeaderList();
         foreach (const QByteArray &header, request.rawHeaderList()) {
             qDebug() << header << request.rawHeader(header);
         }
-        qDebug() << "WARequest:" << request.url().toString();
 
         m_reply = m_nam->get(request);
         QObject::connect(m_reply, SIGNAL(finished()), this, SLOT(onResponse()));

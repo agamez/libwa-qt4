@@ -366,6 +366,7 @@ void WAConnectionPrivate::sendText(const QString &jid, const QString &text, cons
         qulonglong recepientId = getRecepient(jid);
         if (axolotlStore->containsSession(recepientId, 1)) {
             SessionCipher *cipher = getSessionCipher(recepientId);
+            qDebug() << "Ciphering" << text << "to" << recepientId << "with cihper" << cipher;
             QSharedPointer<CiphertextMessage> ciphertext = cipher->encrypt(text.toUtf8());
 
             ProtocolTreeNode encNode("enc");
