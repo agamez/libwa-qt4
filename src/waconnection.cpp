@@ -39,8 +39,8 @@ void WAConnectionPrivate::init()
     mseq = 0;
     sessionTime = QDateTime::currentDateTime().toTime_t();
 
-    axolotlStore.clear();
-    axolotlStore = QSharedPointer<LiteAxolotlStore>(new LiteAxolotlStore(AXOLOTL_DB_CONNECTION));
+    QSharedPointer<LiteAxolotlStore> tmpStore(new LiteAxolotlStore(AXOLOTL_DB_CONNECTION));
+    axolotlStore.swap(tmpStore);
 
     q_ptr->m_connectionStatus = WAConnection::Disconnected;
     Q_EMIT q_ptr->connectionStatusChanged(q_ptr->m_connectionStatus);
